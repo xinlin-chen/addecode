@@ -1,6 +1,9 @@
 close all
 clear;clc
 
+% !!! Download 'bruker_img.mat' from the BassData folder on Box so you
+% don't have to run RussRecon
+
 % This script loads in k space data and displays a slice of the image data.
 % It then uses a sampling mask to generate undersampled k space data and
 % displays three different types of reconstructions: zero-filled recon
