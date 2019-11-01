@@ -47,8 +47,8 @@ save_data = false; %* 'true' if you want to save the data
 data_path = 'bruker_data.mat'; % image path if it's already been saved
 
 addpath(bartpath)
+addpath(main_dir)
 if ~use_espirit_data && ~load_data % Need to be in workpath for RussRecon
-    addpath(pwd)
     cd(workpath)
     % Add paths so that RussRecon can be used
     for ii = 1:length(paths)
