@@ -16,8 +16,8 @@ close all;clear;clc;
 % %* means you can toggle these options
 
 main_dir = '/Users/janetchen/Documents/Bass Connections'; %!
-bartpath = '/Applications/bart/matlab'; %!*
-setenv('TOOLBOX_PATH','/Applications/bart') %!
+bartpath = '/Applications/bart'; %!
+setenv('TOOLBOX_PATH',bartpath)
 
 % The following packages are needed in your main directory:
 paths = {main_dir;[main_dir '/STI_Suite_v2/STI_Suite_v2.1/Source Code_v2.1'];...
@@ -65,9 +65,9 @@ plot_dirpath = '/Users/janetchen/Documents/Bass Connections/Reconstructed images
 %* Save 3D images (fully-sampled and undersampled-ESPIRiT recon images) to NIfTI file
 save_nifti = false;
 
-addpath(bartpath)
+addpath(sprintf('%s/matlab',bartpath))
 addpath(main_dir)
-if ~use_espirit_data && ~load_data % Need to be in workpath for RussRecon
+if ~use_espirit_data && load_data % Need to be in workpath for RussRecon
     cd(workpath)
     % Add paths so that RussRecon can be used
     for ii = 1:length(paths)
