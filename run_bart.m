@@ -15,15 +15,26 @@ close all;clear;clc;
 % your code/BART path is
 % %* means you can toggle these options
 
-main_dir = '/Users/janetchen/Documents/Bass Connections'; %!
-bartpath = '/Applications/bart/matlab'; %!*
-setenv('TOOLBOX_PATH','/Applications/bart') %!
+main_dir = '/Users/alex/janet/Toolboxes'; %!
+
+%bartpath = '/Users/alex/janet/Toolboxes/bart'; %!
+bartpath = '/Users/alex/alex_code/bart-0.5.00'; % Compiled path for kefalonia
+
+
+%bartmatlabpath = '/Users/alex/janet/Toolboxes/bart/matlab'; %!*
+bartmatlabpath= [bartpath '/matlab'];
+
+[addecode_dir,~,~] = fileparts(matlab.desktop.editor.getActiveFilename)
+setenv('TOOLBOX_PATH',bartpath)
 
 % The following packages are needed in your main directory:
 paths = {main_dir;[main_dir '/STI_Suite_v2/STI_Suite_v2.1/Source Code_v2.1'];...
     [main_dir '/RussRecon'];[main_dir '/ImageProcessing'];...
     [main_dir '/NIfTI_20140122'];[main_dir '/MultipleEchoRecon'];...
-    [main_dir '/XCalc']};
+    [main_dir '/XCalc'];addecode_dir};
+
+
+ recon_along_x = 1; % 14 February 2020--our protocols will recon along x instead of z.
 
 % If you need to extract the image data, you need to have the .work folder
 % in the main directory. If you're loading it in (and bruker_img.MAT should
@@ -65,15 +76,15 @@ plot_dirpath = '/Users/janetchen/Documents/Bass Connections/Reconstructed images
 %* Save 3D images (fully-sampled and undersampled-ESPIRiT recon images) to NIfTI file
 save_nifti = false;
 
-addpath(bartpath)
+addpath(bartmatlabpath)
 addpath(main_dir)
-if ~use_espirit_data && ~load_data % Need to be in workpath for RussRecon
-    cd(workpath)
+%if ~use_espirit_data && ~load_data % Need to be in workpath for RussRecon
+    %cd(workpath)
     % Add paths so that RussRecon can be used
     for ii = 1:length(paths)
         addpath(paths{ii,1})
     end
-end
+%end
 
 if use_espirit_data
     % Read in k space data from BART's example (fully sampled)
@@ -105,12 +116,18 @@ if use_espirit_data
     num_coils = size(ksp_data,4);
     sz_x = size(ksp_data,2); sz_y = size(ksp_data,3);
 else
+    num_echoes = size(ksp_data,4); % Will need this if reconning all echoes.
     num_coils = size(ksp_data,5);
     % Z-axis slice to look at
     % 8 echoes, 2 coils
     % Original k space data dimensions: x, y, z, # echoes, # coils
     % ksp_data matrix is 192x192x90x8x2
-    sz_x = size(ksp_data,1); sz_y = size(ksp_data,2);
+    
+    if recon_along_x
+        sz_x = size(ksp_data,2); sz_y = size(ksp_data,3);
+    else
+        sz_x = size(ksp_data,1); sz_y = size(ksp_data,2);
+    end
 end
 
 %% Generate sampling pattern and undersample K-space
@@ -158,6 +175,33 @@ ksp_dims = size(ksp_data);
 fs_3d_img = zeros(ksp_dims(1:3));
 espirit_3d_img = zeros(ksp_dims(1:3));
 
+%% Create simulated data from arbitrary images.
+% Most of this work belongs outside of the slice loop.
+% We may have multi-echo data, but for now let's just work on echo 1.
+% We want to make echo_num a variable so we can generalize later.
+echo_num=1;
+
+if ~use_espirit_data
+    % To match espirit 'full' img dimensions (XxYxcoils, 230x180x8), slice
+    % in z-dimension IN IMAGE domain
+    % Inverse Fourier transform the k space data to get the image data
+    % 'squeeze' just removes singleton dimensions (i.e. dimensions of
+    % length 1)
+    
+    ksp_echo_n_data=squeeze(ksp_data(:,:,:,echo_num,:));
+    
+    % Only going to transform readout direction
+    if recon_along_x
+        readout_dim=1;
+    else
+        readout_dim=3;
+    end
+    
+    %ksp_echo_n_ifft = bart('fft -i 7',squeeze(ksp_data(:,:,:,1,:)));
+    
+	ksp_echo_n_ifft = fftshift(ifft(fftshift(ksp_echo_n_data,readout_dim),[],readout_dim),readout_dim); 
+end
+
 %% Iterate through z-slices
 
 % To run through all slices, set below to 1:size(ksp_data,3)
@@ -167,35 +211,43 @@ slices_to_generate = 52; %* Reconstruct images for these slices
 % quality for one slice). Shows difference maps, quality metrics
 slices_to_compare = 52;
 
+%% Iterate through x-slices
+% 14 February 2020: We are resetting the variables directly above, as we
+% want to iterate through the x-slices.
+
+% To run through all slices, set below to 1:size(ksp_data,1) <--note
+% difference compared to code above (dim 1 vs dim 3)
+slices_to_generate = 52; %* Reconstruct images for these slices
+%* X-axis slice to keep for reconstruction quality comparison (say you're
+% generating images for all slices but want to compare reconstruction
+% quality for one slice). Shows difference maps, quality metrics
+slices_to_compare = 52;
+
+
 % !!! Slices 68-72 have issues
 for slice = slices_to_generate
     if use_espirit_data
         % img is 1x230x180x8
         % Swap x, y, z dimensions so 3rd dimension is 1
-        ksp_data_echo1_z1 = permute(ksp_data(1,:,:,1:num_coils),[2,3,1,4]);
+        ksp_data_echo_n_z1 = permute(ksp_data(1,:,:,1:num_coils),[2,3,1,4]);
         % Take inverse Fourier transform
         coilimg = bart('fft -i 6', ksp_data);
         % Take the root sum of squares to produce one image from multiple coils
         fs_finalimg = bart('rss 4',squeeze(coilimg));
         slice = 1; % Original X dimension is 1 in length, so use that 'slice'
     else
-        
-        % To match espirit 'full' img dimensions (XxYxcoils, 230x180x8), slice
-        % in z-dimension IN IMAGE domain
-        
-        % Inverse Fourier transform the k space data to get the image data
-        % 'squeeze' just removes singleton dimensions (i.e. dimensions of
-        % length 1)
-        ksp_echo1_ifft = bart('fft -i 7',squeeze(ksp_data(:,:,:,1,:)));
-        % Another method to get the ifft: ifftnc(<matrix>);
-        
+  
         % Take the z-axis slice
-        coilimg = ksp_echo1_ifft(:,:,slice,:);
-        % Fourier transform back to k space
-        % ksp_data_echo1 here is 192x192x1x2 (XxYxZxcoils). This will be used
-        % later to get the undersampled data
-        ksp_data_echo1_z1 = bart('fft 7',coilimg);
+        % coilimg = ksp_echo_n_ifft(:,:,slice,:);
+ 
+        if (recon_along_x)
+            ksp_data_echo_n_z1 = squeeze(ksp_echo_n_ifft(slice,:,:,:));
+        else
+            ksp_data_echo_n_z1 = squeeze(ksp_echo_n_ifft(:,:,slice,:));
+        end
         
+        coilimg = bart('fft -i 7',ksp_data_echo_n_z1);
+
         % Take the root sum of squares to produce one image from multiple coils
         fs_finalimg = bart('rss 4', squeeze(coilimg));
     end
@@ -203,32 +255,32 @@ for slice = slices_to_generate
     % Zero out unsampled areas through element-by-element multiplication with
     % sampling pattern
     % 'us' means 'undersampled'
-    us_ksp_echo1_z1 = bart('fmac',squeeze(ksp_data_echo1_z1),sampling_pattern);
-    % Equivalently: squeeze(ksp_data_echo1_z1).*sampling_pattern;
+    us_ksp_echo_n_z1 = bart('fmac',squeeze(ksp_data_echo_n_z1),sampling_pattern);
+    % Equivalently: squeeze(ksp_data_echo_n_z1).*sampling_pattern;
     
     %% Zero-filled reconstruction versus ESPIRiT
     
     % Zero-filled reconstruction (i.e. direct rss from undersampled data)
     % Do IFFT to get image data
-    us_coilimg = bart('fft -i 7',us_ksp_echo1_z1);
+    us_coilimg = bart('fft -i 7',us_ksp_echo_n_z1);
     % Combine coil data using root sum of squares. Reconstruction from under-
     % sampled data without use of calibration/PICS is known as zero-filled
     % econstruction
     zerofilled_finalimg = bart('rss 4', us_coilimg);
     
     % Add singleton dimension so first 3 dimensions reflect x, y, z
-    us_ksp_data_echo1_slice = permute(us_ksp_echo1_z1,[1,2,4,3]);
+    us_ksp_data_echo_n_slice = permute(us_ksp_echo_n_z1,[1,2,4,3]);
     
     % SENSE reconstruction (direct calibration from k-space center)
     % Maps generated using autocalibration
     % !!!Increasing caldir size seems to improve recon? Attempted up to 60
-    sense_maps = bart('caldir 20', us_ksp_data_echo1_slice);
+    sense_maps = bart('caldir 20', us_ksp_data_echo_n_slice);
     % 'PICS' - parallel-imaging compressed-sensing reconstruction
     % Use sliced, undersampled k space data and generated maps to reconstruct
     % image
     % r: regularization parameter, set to 0.001 in Uecker 2014 paper:
     % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4142121/
-    sense_finalimg = bart('pics -l1 -r0.01', us_ksp_data_echo1_slice, sense_maps);
+    sense_finalimg = bart('pics -l1 -r0.01', us_ksp_data_echo_n_slice, sense_maps);
     
     % ESPIRiT reconstruction
     
@@ -240,13 +292,13 @@ for slice = slices_to_generate
     % % emaps dims: 1x230x180x1x2
     % % r: cal size. k: kernel size. m: # maps.
     % Don't increase kernel size past 5 - details start to disappear
-    espirit_maps = bart('ecalib -r 20 -k 5 -m 2', us_ksp_data_echo1_slice); %bart('ecalib -S', us_img_slice_dim4);
+    espirit_maps = bart('ecalib -r 20 -k 5 -m 2', us_ksp_data_echo_n_slice); %bart('ecalib -S', us_img_slice_dim4);
     % size of input 1 = size of input 2
     % l1-wavelet, l2 regularization
     % r: regularization parameter (0.001 in Uecker 2014 paper:
     % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4142121/)
     % 'pics -l1 -r0.01
-    espirit_coilimg = squeeze(bart('pics -l1 -r0.01', us_ksp_data_echo1_slice, espirit_maps));
+    espirit_coilimg = squeeze(bart('pics -l1 -r0.01', us_ksp_data_echo_n_slice, espirit_maps));
     espirit_finalimg = bart('rss 4', espirit_coilimg); % 16 if 'squeeze' not used above
     
     %% Figures
@@ -267,7 +319,9 @@ for slice = slices_to_generate
         % last iteration will be plotted
         fig2 = figure;
         s1 = subplot(1,3,1);
-        imagesc(abs(squeeze(ksp_data_echo1_z1(:,:,1,coil))))
+
+        imagesc(abs(squeeze(ksp_data_echo_n_z1(:,:,coil))))
+
         title(sprintf('(a) Original K-space (coil %d)',coil),'FontSize',15)
         
         s2 = subplot(1,3,2);
@@ -276,17 +330,26 @@ for slice = slices_to_generate
         
         
         s3 = subplot(1,3,3);
-        imagesc(abs(us_ksp_echo1_z1(:,:,1,coil)))
+
         title(sprintf('(c) Undersampled K-space (coil %d)',coil),'FontSize',15)
+        imagesc(squeeze(abs(us_ksp_echo_n_z1(:,:,1,coil))))
+        if (recon_along_x) 
+            s = suptitle(sprintf('Slice %d of x-axis',slice));  
+        else  
+            s = suptitle(sprintf('Slice %d of z-axis',slice));
+        end
         
-        s = suptitle(sprintf('Slice %d of z-axis',slice));
+        
         set(s,'FontSize',16,'FontWeight','bold')
         set(fig2,'Position',[300 600 800 300])
         
         % View ESPIRiT maps
         fig3 = figure;
         ax = gca;
-        imshow3(abs(squeeze(espirit_maps)),[],[2,num_coils])
+        
+        % imshow3 seems to be breaking right now, even though it is in the
+        % MATLAB path...commenting out for now.
+        % imshow3(abs(squeeze(espirit_maps)),[],[2,num_coils])
         title(ax,'ESPIRiT maps','FontSize',15)
         set(fig3,'Position',[50 100 400 400])
     end
@@ -345,9 +408,19 @@ for slice = slices_to_generate
         end
     end
     
-    % Add current z-axis slice to 3D arrays
-    fs_3d_img(:,:,slice) = fs_finalimg;
-    espirit_3d_img(:,:,slice) = espirit_finalimg;
+   
+    if (recon_along_x)
+        % Add current x-axis slice to 3D arrays
+        fs_3d_img(slice,:,:) = fs_finalimg;
+        espirit_3d_img(slice,:,:) = espirit_finalimg;         
+    else
+        % Add current z-axis slice to 3D arrays
+        fs_3d_img(:,:,slice) = fs_finalimg;
+        espirit_3d_img(:,:,slice) = espirit_finalimg;
+    end
+    
+    
+    
     %close all;%close(fig4)
     
     if gen_diff_maps && ismember(slice,slices_to_compare)
