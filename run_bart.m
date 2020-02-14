@@ -1,4 +1,4 @@
-lose all;clear;clc;
+close all;clear;clc;
 
 % If you don't want to run RussRecon (and install all the folders), set
 % load_data to false, download 'bruker_data.mat' and comment out all
