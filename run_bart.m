@@ -1,4 +1,4 @@
-close all;clear;clc;
+lose all;clear;clc;
 
 % If you don't want to run RussRecon (and install all the folders), set
 % load_data to false, download 'bruker_data.mat' and comment out all
@@ -15,7 +15,6 @@ close all;clear;clc;
 % your code/BART path is
 % %* means you can toggle these options
 
-<<<<<<< HEAD
 main_dir = '/Users/alex/janet/Toolboxes'; %!
 
 %bartpath = '/Users/alex/janet/Toolboxes/bart'; %!
@@ -26,10 +25,6 @@ bartpath = '/Users/alex/alex_code/bart-0.5.00'; % Compiled path for kefalonia
 bartmatlabpath= [bartpath '/matlab'];
 
 [addecode_dir,~,~] = fileparts(matlab.desktop.editor.getActiveFilename)
-=======
-main_dir = '/Users/janetchen/Documents/Bass Connections'; %!
-bartpath = '/Applications/bart'; %!
->>>>>>> 9cf6574e613cdad94c2f830914cc7163827808ca
 setenv('TOOLBOX_PATH',bartpath)
 
 % The following packages are needed in your main directory:
@@ -81,17 +76,10 @@ plot_dirpath = '/Users/janetchen/Documents/Bass Connections/Reconstructed images
 %* Save 3D images (fully-sampled and undersampled-ESPIRiT recon images) to NIfTI file
 save_nifti = false;
 
-<<<<<<< HEAD
 addpath(bartmatlabpath)
 addpath(main_dir)
 %if ~use_espirit_data && ~load_data % Need to be in workpath for RussRecon
     %cd(workpath)
-=======
-addpath(sprintf('%s/matlab',bartpath))
-addpath(main_dir)
-if ~use_espirit_data && load_data % Need to be in workpath for RussRecon
-    cd(workpath)
->>>>>>> 9cf6574e613cdad94c2f830914cc7163827808ca
     % Add paths so that RussRecon can be used
     for ii = 1:length(paths)
         addpath(paths{ii,1})
