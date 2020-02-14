@@ -16,6 +16,7 @@ close all;clear;clc;
 % %* means you can toggle these options
 
 main_dir = '/Users/alex/janet/Toolboxes'; %!
+data_dir = '/Users/alex/janet/Data'; %!
 
 %bartpath = '/Users/alex/janet/Toolboxes/bart'; %!
 bartpath = '/Users/alex/alex_code/bart-0.5.00'; % Compiled path for kefalonia
@@ -24,7 +25,7 @@ bartpath = '/Users/alex/alex_code/bart-0.5.00'; % Compiled path for kefalonia
 %bartmatlabpath = '/Users/alex/janet/Toolboxes/bart/matlab'; %!*
 bartmatlabpath= [bartpath '/matlab'];
 
-[addecode_dir,~,~] = fileparts(matlab.desktop.editor.getActiveFilename)
+[addecode_dir,~,~] = fileparts(matlab.desktop.editor.getActiveFilename);
 setenv('TOOLBOX_PATH',bartpath)
 
 % The following packages are needed in your main directory:
@@ -33,13 +34,13 @@ paths = {main_dir;[main_dir '/STI_Suite_v2/STI_Suite_v2.1/Source Code_v2.1'];...
     [main_dir '/NIfTI_20140122'];[main_dir '/MultipleEchoRecon'];...
     [main_dir '/XCalc'];addecode_dir};
 
-
- recon_along_x = 1; % 14 February 2020--our protocols will recon along x instead of z.
+recon_along_x = true; % 14 February 2020--our protocols will recon along x instead of z.
 
 % If you need to extract the image data, you need to have the .work folder
-% in the main directory. If you're loading it in (and bruker_img.MAT should
+% in the data directory. If you're loading it in (and bruker_img.MAT should
 % be in the addecode main directory), you don't need this folder
-workpath = [main_dir '/B04027.work'];
+% workpath = [data_dir '/B04027.work'];
+workpath = [data_dir '/127'];
 
 use_espirit_data = false; %* try out the example image or use our image?
 % If you want to use the example image, the BART folder at
@@ -78,13 +79,10 @@ save_nifti = false;
 
 addpath(bartmatlabpath)
 addpath(main_dir)
-%if ~use_espirit_data && ~load_data % Need to be in workpath for RussRecon
-    %cd(workpath)
-    % Add paths so that RussRecon can be used
-    for ii = 1:length(paths)
-        addpath(paths{ii,1})
-    end
-%end
+% Add paths so that RussRecon can be used
+for ii = 1:length(paths)
+    addpath(paths{ii,1})
+end
 
 if use_espirit_data
     % Read in k space data from BART's example (fully sampled)
@@ -94,6 +92,7 @@ else
         % Load in previously-extracted k space data
         load(sprintf('%s/%s',main_dir,data_path))
     else
+        cd(workpath);
         % Get k space data from .work directory
         ksp_data=get_RussRecon_img('bruker','center','save');
         % If data should be saved, save it
@@ -202,26 +201,14 @@ if ~use_espirit_data
 	ksp_echo_n_ifft = fftshift(ifft(fftshift(ksp_echo_n_data,readout_dim),[],readout_dim),readout_dim); 
 end
 
-%% Iterate through z-slices
+%% Iterate through slices
 
 % To run through all slices, set below to 1:size(ksp_data,3)
-slices_to_generate = 52; %* Reconstruct images for these slices
+slices_to_generate = 90; %* Reconstruct images for these slices
 %* Z-axis slice to keep for reconstruction quality comparison (say you're
 % generating images for all slices but want to compare reconstruction
 % quality for one slice). Shows difference maps, quality metrics
-slices_to_compare = 52;
-
-%% Iterate through x-slices
-% 14 February 2020: We are resetting the variables directly above, as we
-% want to iterate through the x-slices.
-
-% To run through all slices, set below to 1:size(ksp_data,1) <--note
-% difference compared to code above (dim 1 vs dim 3)
-slices_to_generate = 52; %* Reconstruct images for these slices
-%* X-axis slice to keep for reconstruction quality comparison (say you're
-% generating images for all slices but want to compare reconstruction
-% quality for one slice). Shows difference maps, quality metrics
-slices_to_compare = 52;
+slices_to_compare = 90;
 
 
 % !!! Slices 68-72 have issues
@@ -269,7 +256,11 @@ for slice = slices_to_generate
     zerofilled_finalimg = bart('rss 4', us_coilimg);
     
     % Add singleton dimension so first 3 dimensions reflect x, y, z
-    us_ksp_data_echo_n_slice = permute(us_ksp_echo_n_z1,[1,2,4,3]);
+    if recon_along_x
+        us_ksp_data_echo_n_slice = permute(us_ksp_echo_n_z1,[4,1,2,3]);
+    else
+        us_ksp_data_echo_n_slice = permute(us_ksp_echo_n_z1,[1,2,4,3]);
+    end
     
     % SENSE reconstruction (direct calibration from k-space center)
     % Maps generated using autocalibration
@@ -280,7 +271,7 @@ for slice = slices_to_generate
     % image
     % r: regularization parameter, set to 0.001 in Uecker 2014 paper:
     % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4142121/
-    sense_finalimg = bart('pics -l1 -r0.01', us_ksp_data_echo_n_slice, sense_maps);
+    sense_finalimg = squeeze(bart('pics -l1 -r0.01', us_ksp_data_echo_n_slice, sense_maps));
     
     % ESPIRiT reconstruction
     
@@ -347,9 +338,7 @@ for slice = slices_to_generate
         fig3 = figure;
         ax = gca;
         
-        % imshow3 seems to be breaking right now, even though it is in the
-        % MATLAB path...commenting out for now.
-        % imshow3(abs(squeeze(espirit_maps)),[],[2,num_coils])
+        imshow3(abs(squeeze(espirit_maps)),[],[2,num_coils])
         title(ax,'ESPIRiT maps','FontSize',15)
         set(fig3,'Position',[50 100 400 400])
     end
@@ -361,19 +350,19 @@ for slice = slices_to_generate
         fig4 = figure;
         subplot(2,3,[1 4])
         fs_ax = gca;
-        imagesc(fs_finalimg);colormap('gray')
+        imshow(fs_finalimg',[]);colormap('gray')
         title('(a) Original image','FontSize',15);
         
         subplot(2,3,2)
         ax = gca;
-        imshow(zerofilled_finalimg,[])
+        imshow(zerofilled_finalimg',[])
         title(ax,'(b) Zero-filled recon','FontSize',15);
         posn(1,:) = get(ax,'Position');
         
         subplot(2,3,3)
         ax(2) = gca;
         espirit_map1_finalimg = abs(espirit_coilimg(:,:,1));
-        imshow(espirit_map1_finalimg, [])
+        imshow(espirit_map1_finalimg', [])
         title(ax(2),'(c) ESPIRiT recon (map 1)','FontSize',15)
         posn(2,:) = get(ax(2),'Position');
         
@@ -381,13 +370,13 @@ for slice = slices_to_generate
         % sampled k space
         subplot(2,3,5)
         ax(3) = gca;
-        imshow(espirit_finalimg,[]);
+        imshow(espirit_finalimg',[]);
         title(ax(3),'(d) ESPIRiT rss','FontSize',15)
         posn(3,:) = get(ax(3),'Position');
         
         subplot(2,3,6)
         ax(4) = gca;
-        imshow(abs(sense_finalimg),[])
+        imshow(abs(sense_finalimg'),[])
         title(ax(4),'(e) SENSE recon','FontSize',15)
         set(fig4,'Position',[400 100 500 300])
         posn(4,:) = get(ax(4),'Position');
