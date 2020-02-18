@@ -75,7 +75,7 @@ gen_diff_maps = true; %* Generate difference maps
 % Directory in which to save image slices
 plot_dirpath = '/Users/janetchen/Documents/Bass Connections/Reconstructed images';
 %* Save 3D images (fully-sampled and undersampled-ESPIRiT recon images) to NIfTI file
-save_nifti = false;
+save_nifti = true;
 
 addpath(bartmatlabpath)
 addpath(main_dir)
@@ -95,6 +95,11 @@ else
         cd(workpath);
         % Get k space data from .work directory
         ksp_data=get_RussRecon_img('bruker','center','save');
+        % kspace may be centered in along some axes but not others.
+        %ksp_data=fftshift(ksp_data, 1);
+        %ksp_data=fftshift(ksp_data, 2);
+        ksp_data=fftshift(ksp_data, 3);
+        
         % If data should be saved, save it
         if save_data
             save(sprintf('%s/%s',main_dir,data_path),'bruker_data')
@@ -198,13 +203,13 @@ if ~use_espirit_data
     
     %ksp_echo_n_ifft = bart('fft -i 7',squeeze(ksp_data(:,:,:,1,:)));
     
-	ksp_echo_n_ifft = fftshift(ifft(fftshift(ksp_echo_n_data,readout_dim),[],readout_dim),readout_dim); 
+    ksp_echo_n_ifft = fftshift(ifft(fftshift(ksp_echo_n_data,readout_dim),[],readout_dim),readout_dim);
 end
 
 %% Iterate through slices
 
 % To run through all slices, set below to 1:size(ksp_data,3)
-slices_to_generate = 90; %* Reconstruct images for these slices
+slices_to_generate = 1:ksp_dims(1)%90; %* Reconstruct images for these slices
 %* Z-axis slice to keep for reconstruction quality comparison (say you're
 % generating images for all slices but want to compare reconstruction
 % quality for one slice). Shows difference maps, quality metrics
@@ -223,10 +228,10 @@ for slice = slices_to_generate
         fs_finalimg = bart('rss 4',squeeze(coilimg));
         slice = 1; % Original X dimension is 1 in length, so use that 'slice'
     else
-  
+        
         % Take the z-axis slice
         % coilimg = ksp_echo_n_ifft(:,:,slice,:);
- 
+        
         if (recon_along_x)
             ksp_data_echo_n_z1 = squeeze(ksp_echo_n_ifft(slice,:,:,:));
         else
@@ -234,7 +239,7 @@ for slice = slices_to_generate
         end
         
         coilimg = bart('fft -i 7',ksp_data_echo_n_z1);
-
+        
         % Take the root sum of squares to produce one image from multiple coils
         fs_finalimg = bart('rss 4', squeeze(coilimg));
     end
@@ -293,115 +298,116 @@ for slice = slices_to_generate
     espirit_finalimg = bart('rss 4', espirit_coilimg); % 16 if 'squeeze' not used above
     
     %% Figures
-    
-    if show_recon_steps
-        fig = figure;
-        ax = gca;
-        
-        imshow(abs(fs_finalimg),[])
-        % For some reason, when you've used imshow and you don't put in the current
-        % axis, the title appears on the previous axis
-        title(ax,'(a) Original image','FontSize',15)
-        set(fig,'Position',[50 600 300 250])
-        
-        % Plot the original k space, sampling mask, and undersampled k space for
-        % previously sliced data
-        % If data were generated multiple times, the k space/calib maps from the
-        % last iteration will be plotted
-        fig2 = figure;
-        s1 = subplot(1,3,1);
-
-        imagesc(abs(squeeze(ksp_data_echo_n_z1(:,:,coil))))
-
-        title(sprintf('(a) Original K-space (coil %d)',coil),'FontSize',15)
-        
-        s2 = subplot(1,3,2);
-        imagesc(sampling_pattern);
-        title('(b) Sampling pattern','FontSize',15)
-        
-        
-        s3 = subplot(1,3,3);
-
-        title(sprintf('(c) Undersampled K-space (coil %d)',coil),'FontSize',15)
-        imagesc(squeeze(abs(us_ksp_echo_n_z1(:,:,1,coil))))
-        if (recon_along_x) 
-            s = suptitle(sprintf('Slice %d of x-axis',slice));  
-        else  
-            s = suptitle(sprintf('Slice %d of z-axis',slice));
+    if ismember(slice,slices_to_compare)
+        if show_recon_steps
+            fig = figure;
+            ax = gca;
+            
+            imshow(abs(fs_finalimg'),[])
+            % For some reason, when you've used imshow and you don't put in the current
+            % axis, the title appears on the previous axis
+            title(ax,'(a) Original image','FontSize',15)
+            set(fig,'Position',[50 600 300 250])
+            %axis image ij
+            % Plot the original k space, sampling mask, and undersampled k space for
+            % previously sliced data
+            % If data were generated multiple times, the k space/calib maps from the
+            % last iteration will be plotted
+            fig2 = figure;
+            s1 = subplot(1,3,1);
+            
+            %imagesc(abs(squeeze(ksp_data_echo_n_z1(:,:,coil))))
+            imagesc(abs(squeeze(ksp_data_echo_n_z1(:,:,coil)))')
+            
+            title(sprintf('(a) Original K-space (coil %d)',coil),'FontSize',15)
+            
+            s2 = subplot(1,3,2);
+            imagesc(sampling_pattern');
+            title('(b) Sampling pattern','FontSize',15)
+            
+            
+            s3 = subplot(1,3,3);
+            
+            title(sprintf('(c) Undersampled K-space (coil %d)',coil),'FontSize',15)
+            imagesc(squeeze(abs(us_ksp_echo_n_z1(:,:,1,coil)))')
+            if (recon_along_x)
+                s = suptitle(sprintf('Slice %d of x-axis',slice));
+            else
+                s = suptitle(sprintf('Slice %d of z-axis',slice));
+            end
+            
+            
+            set(s,'FontSize',16,'FontWeight','bold')
+            set(fig2,'Position',[300 600 800 300])
+            
+            % View ESPIRiT maps
+            fig3 = figure;
+            ax = gca;
+            
+            imshow3(abs(squeeze(espirit_maps)),[],[2,num_coils])
+            title(ax,'ESPIRiT maps','FontSize',15)
+            set(fig3,'Position',[50 100 400 400])
         end
         
-        
-        set(s,'FontSize',16,'FontWeight','bold')
-        set(fig2,'Position',[300 600 800 300])
-        
-        % View ESPIRiT maps
-        fig3 = figure;
-        ax = gca;
-        
-        imshow3(abs(squeeze(espirit_maps)),[],[2,num_coils])
-        title(ax,'ESPIRiT maps','FontSize',15)
-        set(fig3,'Position',[50 100 400 400])
+        if gen_recon_plots
+            % Comparisons of different reconstruction methods
+            % Plot images from last iteration
+            % Zero-filled reconstruction
+            fig4 = figure;
+            subplot(2,3,[1 4])
+            fs_ax = gca;
+            imshow(fs_finalimg',[]);colormap('gray')
+            title('(a) Original image','FontSize',15);
+            
+            subplot(2,3,2)
+            ax = gca;
+            imshow(zerofilled_finalimg',[])
+            title(ax,'(b) Zero-filled recon','FontSize',15);
+            posn(1,:) = get(ax,'Position');
+            
+            subplot(2,3,3)
+            ax(2) = gca;
+            espirit_map1_finalimg = abs(espirit_coilimg(:,:,1));
+            imshow(espirit_map1_finalimg', [])
+            title(ax(2),'(c) ESPIRiT recon (map 1)','FontSize',15)
+            posn(2,:) = get(ax(2),'Position');
+            
+            % This image should be the most accurate/closest to image from fully
+            % sampled k space
+            subplot(2,3,5)
+            ax(3) = gca;
+            imshow(espirit_finalimg',[]);
+            title(ax(3),'(d) ESPIRiT rss','FontSize',15)
+            posn(3,:) = get(ax(3),'Position');
+            
+            subplot(2,3,6)
+            ax(4) = gca;
+            imshow(abs(sense_finalimg'),[])
+            title(ax(4),'(e) SENSE recon','FontSize',15)
+            set(fig4,'Position',[400 100 500 300])
+            posn(4,:) = get(ax(4),'Position');
+            
+            % Reposition image axes
+            posn([1,3],1) = 0.34;posn([2,4],1) = 0.68;
+            posn([1,2],2) = posn([1,2],2)-0.07;posn([3,4],2) = posn([3,4],2)-0.1;
+            posn(:,[3,4]) = repmat(wh,4,1);
+            fs_posn = get(fs_ax,'Position'); fs_posn=[0.05 0.33 wh];
+            set(fs_ax,'Position',fs_posn)
+            for ii = 1:size(posn,1)
+                set(ax(ii),'Position',posn(ii,:))
+            end
+            
+            if save_recon_plots
+                %set(gcf,'Color','none')
+                saveas(fig4,sprintf('%s/Slice %d.png',plot_dirpath,slice))
+            end
+        end
     end
     
-    if gen_recon_plots
-        % Comparisons of different reconstruction methods
-        % Plot images from last iteration
-        % Zero-filled reconstruction
-        fig4 = figure;
-        subplot(2,3,[1 4])
-        fs_ax = gca;
-        imshow(fs_finalimg',[]);colormap('gray')
-        title('(a) Original image','FontSize',15);
-        
-        subplot(2,3,2)
-        ax = gca;
-        imshow(zerofilled_finalimg',[])
-        title(ax,'(b) Zero-filled recon','FontSize',15);
-        posn(1,:) = get(ax,'Position');
-        
-        subplot(2,3,3)
-        ax(2) = gca;
-        espirit_map1_finalimg = abs(espirit_coilimg(:,:,1));
-        imshow(espirit_map1_finalimg', [])
-        title(ax(2),'(c) ESPIRiT recon (map 1)','FontSize',15)
-        posn(2,:) = get(ax(2),'Position');
-        
-        % This image should be the most accurate/closest to image from fully
-        % sampled k space
-        subplot(2,3,5)
-        ax(3) = gca;
-        imshow(espirit_finalimg',[]);
-        title(ax(3),'(d) ESPIRiT rss','FontSize',15)
-        posn(3,:) = get(ax(3),'Position');
-        
-        subplot(2,3,6)
-        ax(4) = gca;
-        imshow(abs(sense_finalimg'),[])
-        title(ax(4),'(e) SENSE recon','FontSize',15)
-        set(fig4,'Position',[400 100 500 300])
-        posn(4,:) = get(ax(4),'Position');
-        
-        % Reposition image axes
-        posn([1,3],1) = 0.34;posn([2,4],1) = 0.68;
-        posn([1,2],2) = posn([1,2],2)-0.07;posn([3,4],2) = posn([3,4],2)-0.1;
-        posn(:,[3,4]) = repmat(wh,4,1);
-        fs_posn = get(fs_ax,'Position'); fs_posn=[0.05 0.33 wh];
-        set(fs_ax,'Position',fs_posn)
-        for ii = 1:size(posn,1)
-            set(ax(ii),'Position',posn(ii,:))
-        end
-        
-        if save_recon_plots
-            %set(gcf,'Color','none')
-            saveas(fig4,sprintf('%s/Slice %d.png',plot_dirpath,slice))
-        end
-    end
-    
-   
     if (recon_along_x)
         % Add current x-axis slice to 3D arrays
         fs_3d_img(slice,:,:) = fs_finalimg;
-        espirit_3d_img(slice,:,:) = espirit_finalimg;         
+        espirit_3d_img(slice,:,:) = espirit_finalimg;
     else
         % Add current z-axis slice to 3D arrays
         fs_3d_img(:,:,slice) = fs_finalimg;
