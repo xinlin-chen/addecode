@@ -42,7 +42,10 @@ recon_along_x = true; % 14 February 2020--our protocols will recon along x inste
 % in the data directory. If you're loading it in (and bruker_img.MAT should
 % be in the addecode main directory), you don't need this folder
 % workpath = [data_dir '/B04027.work'];
-workpath = [data_dir '/115']; % [data_dir '/127'];
+workpath = [data_dir '/127']; % [data_dir '/127'];
+% Re-center k-space. Set to false for B04027, which is already centered
+do_fft_shift = true;
+y_shift = 10;
 
 addpath(bartmatlabpath)
 addpath(main_dir)
@@ -92,11 +95,11 @@ espirit_num_maps = 2; %* Number of sensitivity maps to calculate
 ksp_bwh = [0.08 0.29 0.8]; %* Bottom position and size of plots of K-space
 %* Width and height of images in plot comparing reconstruction quality
 wh = [0.4,0.3];
-show_recon_steps = true; %* Show sampling pattern, calibration maps, etc.?
-gen_recon_plots = true; %* Generate plot comparing reconstruction quality?
+show_recon_steps = false; %* Show sampling pattern, calibration maps, etc.?
+gen_recon_plots = false; %* Generate plot comparing reconstruction quality?
 %* Save plot comparing reconstruction quality? Only saves plots if they were actually generated.
 save_recon_plots = false;
-gen_diff_maps = true; %* Generate difference maps
+gen_diff_maps = false; %* Generate difference maps
 
 % Directory in which to save image slices
 plot_dirpath = '/Users/janetchen/Documents/Bass Connections/Reconstructed images';
@@ -117,9 +120,14 @@ else
         % Get k space data from .work directory
         ksp_data=get_RussRecon_img('bruker','center','save');
         % kspace may be centered in along some axes but not others.
-        %ksp_data=fftshift(ksp_data, 1);
-        %ksp_data=fftshift(ksp_data, 2);
-        ksp_data=fftshift(ksp_data, 3);
+        
+        if do_fft_shift
+            % Comment out if using B04027.work
+            % Recenter RARE k-space in z-direction
+            ksp_data=fftshift(ksp_data, 3);
+            % MANUALLY recenter in y-direction
+            ksp_data = circshift(ksp_data,y_shift,2);
+        end
         
         % If data should be saved, save it
         if save_data
@@ -230,11 +238,11 @@ end
 %% Iterate through slices
 
 % To run through all slices, set below to 1:size(ksp_data,3)
-slices_to_generate = 90; %1:ksp_dims(1); %* Reconstruct images for these slices
+slices_to_generate = 1:ksp_dims(1); %* Reconstruct images for these slices
 %* Z-axis slice to keep for reconstruction quality comparison (say you're
 % generating images for all slices but want to compare reconstruction
 % quality for one slice). Shows difference maps, quality metrics
-slices_to_compare = 90;
+slices_to_compare = slices_to_generate;
 
 
 % !!! Slices 68-72 have issues
