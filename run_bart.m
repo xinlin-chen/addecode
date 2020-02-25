@@ -12,17 +12,19 @@ close all;clear;clc;
 
 % BART must be installed for bart commands to work
 % %! means these settings must be changed for each user depending on where
-% your code/BART path is
+% your code/data/toolbox/BART path is
 % %* means you can toggle these options
+
+% main_dir = '/Users/janetchen/Documents/Bass Connections';
+% data_dir = '/Users/janetchen/Documents/Bass Connections';
+% bartpath = '/Applications/bart';
+
+%% Set, add directories
 
 main_dir = '/Users/alex/janet/Toolboxes'; %!
 data_dir = '/Users/alex/janet/Data'; %!
+bartpath = '/Users/alex/alex_code/bart-0.5.00'; %! Compiled path for kefalonia
 
-%bartpath = '/Users/alex/janet/Toolboxes/bart'; %!
-bartpath = '/Users/alex/alex_code/bart-0.5.00'; % Compiled path for kefalonia
-
-
-%bartmatlabpath = '/Users/alex/janet/Toolboxes/bart/matlab'; %!*
 bartmatlabpath= [bartpath '/matlab'];
 
 [addecode_dir,~,~] = fileparts(matlab.desktop.editor.getActiveFilename);
@@ -40,8 +42,16 @@ recon_along_x = true; % 14 February 2020--our protocols will recon along x inste
 % in the data directory. If you're loading it in (and bruker_img.MAT should
 % be in the addecode main directory), you don't need this folder
 % workpath = [data_dir '/B04027.work'];
-workpath = [data_dir '/127'];
+workpath = [data_dir '/115']; % [data_dir '/127'];
 
+addpath(bartmatlabpath)
+addpath(main_dir)
+% Add paths so that RussRecon can be used
+for ii = 1:length(paths)
+    addpath(paths{ii,1})
+end
+
+%% General settings
 use_espirit_data = false; %* try out the example image or use our image?
 % If you want to use the example image, the BART folder at
 % https://github.com/mikgroup/espirit-matlab-examples must be downloaded
@@ -61,12 +71,28 @@ load_mask = false; %* load sampling mask in? Currently, only BJ mask is saved
 num_iter = 1; % Number of sampling patterns/reconstructions to generate
 % (to get mean RLNE, PSNR values)
 
-acceleration = 4; %* Undersample by a factor of <acceleration>
+%% Undersampling/recon settings
 
-% !!! ^ currently implementing
+% Undersampling parameters
+acceleration = 8; %* Undersample by a factor of <acceleration>
+cal_reg = 60; % Size of calibration region. 60
+
+% Reconstruction parameters
+reg_stepsize = 0.01; %* Size of regularization parameter. 0.01
+reg_method = 'l1'; %* Regularization method ('l1' or 'l2'). l1
+% caldir.c
+sense_cal_size = 20; %* Upper limit of calibration region size
+% ecalib.c
+espirit_cal_size = 20; %* Upper limit of calibration region size
+espirit_kernel_size = 5; %* Kernel size
+espirit_num_maps = 2; %* Number of sensitivity maps to calculate
+
+%% Plot settings
+
+ksp_bwh = [0.08 0.29 0.8]; %* Bottom position and size of plots of K-space
+%* Width and height of images in plot comparing reconstruction quality
+wh = [0.4,0.3];
 show_recon_steps = true; %* Show sampling pattern, calibration maps, etc.?
-% Width and height of images in plot comparing reconstruction quality
-wh = [0.2582,0.4128];
 gen_recon_plots = true; %* Generate plot comparing reconstruction quality?
 %* Save plot comparing reconstruction quality? Only saves plots if they were actually generated.
 save_recon_plots = false;
@@ -77,12 +103,7 @@ plot_dirpath = '/Users/janetchen/Documents/Bass Connections/Reconstructed images
 %* Save 3D images (fully-sampled and undersampled-ESPIRiT recon images) to NIfTI file
 save_nifti = true;
 
-addpath(bartmatlabpath)
-addpath(main_dir)
-% Add paths so that RussRecon can be used
-for ii = 1:length(paths)
-    addpath(paths{ii,1})
-end
+%% Load or read in data
 
 if use_espirit_data
     % Read in k space data from BART's example (fully sampled)
@@ -154,7 +175,7 @@ if bart_mask
     % Original output of BART command is 3 dimensional, with first
     % dimension of length 1, so squeeze to remove this dimension
     % C manually tuned to 60 for best reconstruction results
-    sampling_pattern = squeeze(bart(sprintf('poisson -Y %d -Z %d -y 1 -z 1 -C 60 -R %d -v -e',sz_x,sz_y,num_points)));
+    sampling_pattern = squeeze(bart(sprintf('poisson -Y %d -Z %d -y 1 -z 1 -C %d -R %d -v -e',sz_x,sz_y,cal_reg,num_points)));
 else
     % Mask from BJ Anderson's code
     if load_mask
@@ -209,7 +230,7 @@ end
 %% Iterate through slices
 
 % To run through all slices, set below to 1:size(ksp_data,3)
-slices_to_generate = 1:ksp_dims(1)%90; %* Reconstruct images for these slices
+slices_to_generate = 90; %1:ksp_dims(1); %* Reconstruct images for these slices
 %* Z-axis slice to keep for reconstruction quality comparison (say you're
 % generating images for all slices but want to compare reconstruction
 % quality for one slice). Shows difference maps, quality metrics
@@ -270,13 +291,13 @@ for slice = slices_to_generate
     % SENSE reconstruction (direct calibration from k-space center)
     % Maps generated using autocalibration
     % !!!Increasing caldir size seems to improve recon? Attempted up to 60
-    sense_maps = bart('caldir 20', us_ksp_data_echo_n_slice);
+    sense_maps = bart(sprintf('caldir %d',sense_cal_size), us_ksp_data_echo_n_slice);
     % 'PICS' - parallel-imaging compressed-sensing reconstruction
     % Use sliced, undersampled k space data and generated maps to reconstruct
     % image
     % r: regularization parameter, set to 0.001 in Uecker 2014 paper:
     % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4142121/
-    sense_finalimg = squeeze(bart('pics -l1 -r0.01', us_ksp_data_echo_n_slice, sense_maps));
+    sense_finalimg = squeeze(bart(sprintf('pics -%s -r%d',reg_method,reg_stepsize), us_ksp_data_echo_n_slice, sense_maps));
     
     % ESPIRiT reconstruction
     
@@ -288,13 +309,15 @@ for slice = slices_to_generate
     % % emaps dims: 1x230x180x1x2
     % % r: cal size. k: kernel size. m: # maps.
     % Don't increase kernel size past 5 - details start to disappear
-    espirit_maps = bart('ecalib -r 20 -k 5 -m 2', us_ksp_data_echo_n_slice); %bart('ecalib -S', us_img_slice_dim4);
+    espirit_maps = bart(sprintf('ecalib -r %d -k %d -m %d',espirit_cal_size,...
+        espirit_kernel_size,espirit_num_maps),us_ksp_data_echo_n_slice); %bart('ecalib -S', us_img_slice_dim4);
     % size of input 1 = size of input 2
     % l1-wavelet, l2 regularization
     % r: regularization parameter (0.001 in Uecker 2014 paper:
     % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4142121/)
     % 'pics -l1 -r0.01
-    espirit_coilimg = squeeze(bart('pics -l1 -r0.01', us_ksp_data_echo_n_slice, espirit_maps));
+    espirit_coilimg = squeeze(bart(sprintf('pics -%s -r%d',reg_method,...
+        reg_stepsize), us_ksp_data_echo_n_slice, espirit_maps));
     espirit_finalimg = bart('rss 4', espirit_coilimg); % 16 if 'squeeze' not used above
     
     %% Figures
@@ -320,33 +343,36 @@ for slice = slices_to_generate
             imagesc(abs(squeeze(ksp_data_echo_n_z1(:,:,coil)))')
             
             title(sprintf('(a) Original K-space (coil %d)',coil),'FontSize',15)
+            set(s1,'Position',[0.03 ksp_bwh])
             
             s2 = subplot(1,3,2);
             imagesc(sampling_pattern');
             title('(b) Sampling pattern','FontSize',15)
-            
+            set(s2,'Position',[0.36 ksp_bwh])
             
             s3 = subplot(1,3,3);
             
-            title(sprintf('(c) Undersampled K-space (coil %d)',coil),'FontSize',15)
             imagesc(squeeze(abs(us_ksp_echo_n_z1(:,:,1,coil)))')
-            if (recon_along_x)
+            title(sprintf('(c) Undersampled K-space (coil %d)',coil),'FontSize',15)
+            set(s3,'Position',[0.7 ksp_bwh])
+            
+            if recon_along_x
                 s = suptitle(sprintf('Slice %d of x-axis',slice));
             else
                 s = suptitle(sprintf('Slice %d of z-axis',slice));
             end
             
-            
             set(s,'FontSize',16,'FontWeight','bold')
-            set(fig2,'Position',[300 600 800 300])
+            set(fig2,'Position',[300 600 800 270])
             
             % View ESPIRiT maps
             fig3 = figure;
             ax = gca;
             
-            imshow3(abs(squeeze(espirit_maps)),[],[2,num_coils])
+            imshow3(abs(squeeze(espirit_maps)),[],[espirit_num_maps,num_coils])
             title(ax,'ESPIRiT maps','FontSize',15)
-            set(fig3,'Position',[50 100 400 400])
+            set(fig3,'Position',[50 100 400 130*espirit_num_maps])
+            set(ax,'Position',[0.05 0.04 0.9 0.88])
         end
         
         if gen_recon_plots
@@ -384,14 +410,16 @@ for slice = slices_to_generate
             ax(4) = gca;
             imshow(abs(sense_finalimg'),[])
             title(ax(4),'(e) SENSE recon','FontSize',15)
-            set(fig4,'Position',[400 100 500 300])
+            set(fig4,'Position',[400 100 520 300])
             posn(4,:) = get(ax(4),'Position');
             
             % Reposition image axes
-            posn([1,3],1) = 0.34;posn([2,4],1) = 0.68;
-            posn([1,2],2) = posn([1,2],2)-0.07;posn([3,4],2) = posn([3,4],2)-0.1;
+            % Shift to same column position
+            posn([1,3],1) = 0.28;posn([2,4],1) = 0.62;
+            % Shift to same row position
+            posn([1,2],2) = posn([1,2],2)-0.04;posn([3,4],2) = posn([3,4],2)-0.04;
             posn(:,[3,4]) = repmat(wh,4,1);
-            fs_posn = get(fs_ax,'Position'); fs_posn=[0.05 0.33 wh];
+            fs_posn = get(fs_ax,'Position'); fs_posn=[-0.04 0.33 wh];
             set(fs_ax,'Position',fs_posn)
             for ii = 1:size(posn,1)
                 set(ax(ii),'Position',posn(ii,:))
@@ -431,14 +459,16 @@ for slice = slices_to_generate
         % SENSE reconstruction
         x_hat_sense = abs(gs_normalize(sense_finalimg,255));
         % Also assess using difference maps (?)
-        figure;ax = gca;imshow([abs(x-x_hat_zero),...
-            abs(x-x_hat_espirit),...
-            abs(x-x_hat_sense)],[]);
+        fig5 = figure;ax = gca;imshow([abs(x-x_hat_zero)',...
+            abs(x-x_hat_espirit)',...
+            abs(x-x_hat_sense)'],[]);
         % For imshow, have to manually change current axes, otherwise the titles
         % plot on the prev axes, and suptitle doesn't accept axes as an input
         axes(ax);ax.FontSize = 13;
         title(sprintf('(a) Zero-filled recon\t\t\t\t\t(b) ESPIRiT recon (2 maps)\t\t\t\t\t\t(c) SENSE recon'));
         t = suptitle('Difference maps');set(t,'FontSize',16,'FontWeight','bold')
+        set(ax,'Position',[0.01 0.1 0.98 0.6])
+        set(fig5,'Position',[150 400 500 150])
     end
     fprintf(sprintf('Reconstructed slice %d\n',slice))
 end
