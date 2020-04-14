@@ -75,8 +75,15 @@ load_mask = false; %* load sampling mask in? Currently, only BJ mask is saved
 num_iter = 1; % Number of sampling patterns/reconstructions to generate
 % (to get mean RLNE, PSNR values)
 
-gen_quality_metrics = true; % Whether to generate quality metrics
+gen_quality_metrics = true; % Whether to generate quality metrics (QM)
 % (RLNE/PSNR/SSIM) for each slice
+% When saving QM figure generated with BJ's sampling pattern, note this in
+% the filename
+if ~bart_mask && gen_quality_metrics
+    mask = 'bj_';
+else
+    mask = '';
+end
 
 %% Plot settings
 
@@ -84,7 +91,7 @@ ksp_bwh = [0.08 0.29 0.8]; %* Bottom position and size of plots of K-space
 %* Width and height of images in plot comparing reconstruction quality
 recon_wh = [0.325,0.35];
 poster_wh = [0.9,0.32]; %0.28];
-cols = 'kbrgmc';
+cols = 'brgmc';
 show_recon_steps = false; %* Show sampling pattern, calibration maps, etc.?
 gen_recon_plots = false; %* Generate plot comparing reconstruction quality?
 %* Save plot comparing reconstruction quality? Only saves plots if they were actually generated.
@@ -179,7 +186,9 @@ slices_to_compare = slices_to_generate;
 %% Undersampling/recon settings
 
 % Undersampling parameters
-acceleration = 4; %* Undersample by a factor of <acceleration>
+acceleration = 4; %* Undersample by a factor of <acceleration>. NOTE: this
+% is often not the 'true' acceleration for some reason, so look at
+% 'actual_accel' too (calculated directly from generated sampling pattern)
 cal_reg = 60; % Size of calibration region. 60
 
 % Reconstruction parameters
@@ -188,26 +197,27 @@ reg_method = 'l1'; %* Regularization method ('l1' or 'l2'). l1
 % caldir.c, ecalib.c
 recon_cal_size = cal_reg; %* Upper limit of calibration region size
 espirit_kernel_size = 5; %* Kernel size
-espirit_num_maps = 4; %* Number of sensitivity maps to calculate
-gen_sense_recon = false; % Generate SENSE reconstruction?
+espirit_num_maps = 4; %* Number of sensitivity maps to calculate.
+% ^ Cannot be more than the number of coils used to acquire the image
+gen_sense_recon = true; % Generate SENSE reconstruction (as well as ESPIRiT)?
 
 %% Grid search
 % Choose variable to iterate over
 iter_vars = {'acceleration','cal_reg','reg_stepsize',...
     'espirit_kernel_size','espirit_num_maps'};
 % Set iteration type from options in cell above
-iter_type = 2; % Set to 0 to not iterate
+iter_type = 1; % Set to 0 to not iterate
 
 iter_var_titles = {'Acceleration','Calibration Region Size','Step-size',...
     'Kernel Size','Number of maps'};
 if iter_type == 0
     iter_values = NaN;
 else
-    %iter_values = 4:8;
+    iter_values = 4:6; %acceleration
     %iter_values = 1:4; % maps
     %iter_values = 2:9; % k size
-    iter_values = 30:10:80; % cal reg
-    %iter_values = [7.5e-3,1e-2,2.5e-2,5e-2,1e-1,5e-1]; %stepsize (slicing in x)
+    %iter_values = 30:10:80; % cal reg
+    %iter_values = [2.5e-3,5e-3,7.5e-3,1e-2,2.5e-2,5e-2]; %stepsize (slicing in x)
     %iter_values = [1e-4,1e-3,5e-3,1e-2,5e-2,1e-1]; %stepsize (slicing in z)
 end
 
@@ -217,12 +227,12 @@ end
 % metric for visualization purposes)
 if strcmp(iter_vars{iter_type},'acceleration') || ...
         strcmp(iter_vars{iter_type},'cal_reg')
-    mult_zf_qm = true;
+    regenerate_mask = true;
 else
     % If something like regularization step-size is being changed,
     % zero-filled reconstruction is not affected, and therefore you only
-    % need to compare one ZF recon with all the ESPiRIT/SENSE recons
-    mult_zf_qm = false;
+    % need to compare one ZF recon with all the ESPIRiT/SENSE recons
+    regenerate_mask = false;
 end
 
 %% Create simulated data from arbitrary images.
@@ -255,8 +265,12 @@ end
 %% Iterate through desired recon settings
 
 for iter = 1:length(iter_values)
+    if iter_type > 0
+        % Step through values for iterating variable
+        eval(sprintf('%s = %d;',iter_vars{iter_type},iter_values(iter)))
+    end
     %% Generate sampling pattern and undersample K-space
-    if iter == 1 || mult_zf_qm % Re-generate if acceleration or calibration region is changed
+    if iter == 1 || regenerate_mask % Re-generate if acceleration or calibration region is changed
         % Coil # for which to plot k space data and undersampling
         coil = 1;
         if bart_mask
@@ -294,16 +308,12 @@ for iter = 1:length(iter_values)
         % the size of the calibration region affects the true ('effective')
         % acceleration
         
-        effective_acc(iter) = 1/(length(find(sampling_pattern ~= 0))/numel(sampling_pattern));
-        fprintf(sprintf('\tMask non-zero percentage: %.2f%%',100/effective_acc(iter)))
+        actual_accel(iter) = 1/(length(find(sampling_pattern ~= 0))/numel(sampling_pattern));
+        fprintf(sprintf('\tMask non-zero percentage: %.2f%%',100/actual_accel(iter)))
         fprintf('\n')
     end
     
-    if iter_type > 0
-        % Step through values for iterating variable
-        eval(sprintf('%s = %d;',iter_vars{iter_type},iter_values(iter)))
-    end
-    % !!! Now, peg ESPiRIT calibration region size to sampling region size
+    % !!! Now, peg ESPIRiT calibration region size to sampling region size
     % if it changes
     recon_cal_size = cal_reg;
     
@@ -311,7 +321,9 @@ for iter = 1:length(iter_values)
     fs_3d_img = zeros(ksp_dims(1:3)); % Fully sampled
     zf_3d_img = zeros(ksp_dims(1:3)); % Undersampled, zero-filled
     espirit_3d_img = zeros(ksp_dims(1:3)); % Recon using espirit
-    sense_3d_img = zeros(ksp_dims(1:3));
+    if gen_sense_recon
+        sense_3d_img = zeros(ksp_dims(1:3));
+    end
     
     %% Reconstruct every slice
     for slice = slices_to_generate
@@ -568,11 +580,17 @@ for iter = 1:length(iter_values)
             fs_3d_img(slice,:,:) = fs_finalimg;
             zf_3d_img(slice,:,:) = zf_finalimg;
             espirit_3d_img(slice,:,:) = espirit_finalimg;
+            if gen_sense_recon
+                sense_3d_img(slice,:,:) = sense_finalimg;
+            end
         else
             % Add current z-axis slice to 3D arrays
             fs_3d_img(:,:,slice) = fs_finalimg;
             zf_3d_img(:,:,slice) = zf_finalimg;
             espirit_3d_img(:,:,slice) = espirit_finalimg;
+            if gen_sense_recon
+                sense_3d_img(:,:,slice) = sense_finalimg;
+            end
         end
         
         %close all;%close(fig4)
@@ -702,12 +720,13 @@ for iter = 1:length(iter_values)
             % SSIM from MATLAB function
             ssim_espirit(slice,iter) = ssim(x_hat_espirit,x);
             
-            if iter == 1 || mult_zf_qm
+            if iter == 1 || regenerate_mask
                 rlne_zero(slice,iter) = get_rlne(x,x_hat_zero);
                 psnr_zero(slice,iter) = get_psnr(x,x_hat_zero,255);
                 ssim_zero(slice,iter) = ssim(x_hat_zero,x);
             end
             
+            % SENSE recon optional
             if gen_sense_recon
                 if recon_along_x
                     sense_img = squeeze(sense_3d_img(slice,:,:));
@@ -727,10 +746,10 @@ end
 % Plot reconstruction quality performance
 if gen_quality_metrics
     qm_fig = figure;
-    if ~mult_zf_qm
+    if ~regenerate_mask
         num_plots = 3;
         num_rows = 1;
-        zf_cols = cols;
+        zf_cols = 'k';
         set(qm_fig,'Position',[50 300 950 300])
         if strcmp(iter_vars{iter_type},'reg_stepsize')
             legend_str = {'Zero-filled'};
@@ -742,23 +761,20 @@ if gen_quality_metrics
                 sprintf('ESPIRiT, %d',x),iter_values,'UniformOutput',false);
         end
     else
-        num_plots = 3*length(iter_values)*mult_zf_qm;
+        num_plots = 3*length(iter_values)*regenerate_mask;
         num_rows = ceil(num_plots/3);
         zf_cols = repmat('k',1,size(rlne_zero,2));
         cols = repmat('r',1,size(rlne_espirit,2));
-        legend_str2 = {'Zero-filled','ESPIRiT'};
-        set(qm_fig,'Position',[50 300 950 min([280*num_rows,700])])
-        if strcmp(iter_vars{iter_type},'reg_stepsize')
-            legend_str = arrayfun(@(x) ...
-                sprintf('ZF, %1.0e',x),iter_values,'UniformOutput',false);
-            legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
-                sprintf('ESPIRiT, %1.0e',x),iter_values,'UniformOutput',false);
+        if gen_sense_recon
+            legend_str2 = {'Zero-filled','ESPIRiT','SENSE'};
         else
-            legend_str = arrayfun(@(x) ...
-                sprintf('ZF, %d',x),iter_values,'UniformOutput',false);
-            legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
-                sprintf('ESPIRiT, %d',x),iter_values,'UniformOutput',false);
+            legend_str2 = {'Zero-filled','ESPIRiT'};
         end
+        set(qm_fig,'Position',[50 300 950 min([280*num_rows,700])])
+        legend_str = arrayfun(@(x) ...
+            sprintf('ZF, %d',x),iter_values,'UniformOutput',false);
+        legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
+            sprintf('ESPIRiT, %d',x),iter_values,'UniformOutput',false);
     end
     for ii = 1:num_plots
         s(ii) = subplot(num_rows,3,ii);hold(s(ii),'on')
@@ -768,14 +784,14 @@ if gen_quality_metrics
     % Plot individually so that line colors can be custom set
     % Plot each type of reconstruction together (for grouping in legend)
     for ii = 1:size(rlne_espirit,2)
-        plot_ind = 1+3*mult_zf_qm*(ii-1);
+        plot_ind = 1+3*regenerate_mask*(ii-1);
         col = cols(mod(ii-1,length(cols))+1);
         if floor((ii-1)/length(cols))>0
             line_style = ':';
         else
             line_style = '--';
         end
-        if ii == 1 || mult_zf_qm
+        if ii == 1 || regenerate_mask
             zf_col = zf_cols(mod(ii-1,length(zf_cols))+1);
             plot(s(plot_ind),rlne_zero(:,ii),zf_col,'LineWidth',1.5)
             plot(s(plot_ind+1),psnr_zero(:,ii),zf_col,'LineWidth',1.5)
@@ -785,9 +801,9 @@ if gen_quality_metrics
         plot(s(plot_ind),rlne_espirit(:,ii),[line_style,col],'LineWidth',1.5)
         plot(s(plot_ind+1),psnr_espirit(:,ii),[line_style,col],'LineWidth',1.5)
         plot(s(plot_ind+2),ssim_espirit(:,ii),[line_style,col],'LineWidth',1.5)
-        if mult_zf_qm
-        ylabel(s(plot_ind),{sprintf('%s %d',iter_var_str,iter_values(ii)),...
-            '\leftarrow RLNE'})
+        if regenerate_mask
+            ylabel(s(plot_ind),{sprintf('%s %d',iter_var_str,iter_values(ii)),...
+                '\leftarrow RLNE'})
         else
             ylabel(s(plot_ind),'\leftarrow RLNE')
         end
@@ -820,16 +836,18 @@ if gen_quality_metrics
     
     if gen_sense_recon
         for ii = 1:size(rlne_sense,2)
-            plot_ind = 1+3*mult_zf_qm*(ii-1);
+            % Plot in a new row if zero-filled data is plotted across
+            % multiple rows
+            plot_ind = 1+3*regenerate_mask*(ii-1);
             plot(s(plot_ind),rlne_sense,[':',cols(ii)],'LineWidth',1.5)
             plot(s(plot_ind+1),psnr_sense,[':',cols(ii)],'LineWidth',1.5)
             plot(s(plot_ind+2),ssim_sense,[':',cols(ii)],'LineWidth',1.5)
         end
         if strcmp(iter_vars{iter_type},'reg_stepsize')
-            legend_str{end+1:end+length(iter_values)} = arrayfun(@(x) ...
+            legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
                 sprintf('SENSE, %1.0e',x),iter_values,'UniformOutput',false);
         else
-            legend_str{end+1:end+length(iter_values)} = arrayfun(@(x) ...
+            legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
                 sprintf('SENSE, %d',x),iter_values,'UniformOutput',false);
         end
         [~,min_rlne_ind] = min(mean([rlne_zero,rlne_espirit,rlne_sense]));
@@ -838,6 +856,7 @@ if gen_quality_metrics
         title(s(2),['PSNR (best: ',legend_str{max_psnr_ind},')'])
         [~,max_ssim_ind] = max(mean([ssim_zero,ssim_espirit,ssim_sense]));
         title(s(3),['SSIM (best: ',legend_str{max_ssim_ind},')'])
+        sense_flag = 'sense_';
     else
         [~,min_rlne_ind] = min(mean([rlne_zero,rlne_espirit]));
         title(s(1),['RLNE (best: ',legend_str{min_rlne_ind},')'])
@@ -845,9 +864,10 @@ if gen_quality_metrics
         title(s(2),['PSNR (best: ',legend_str{max_psnr_ind},')'])
         [~,max_ssim_ind] = max(mean([ssim_zero,ssim_espirit]));
         title(s(3),['SSIM (best: ',legend_str{max_ssim_ind},')'])
+        sense_flag = '';
     end
     
-    if mult_zf_qm
+    if regenerate_mask
         l = legend(s(3),legend_str2);
         l.Location = 'northeast';
         l.Position(1) = 0.9;
@@ -867,23 +887,23 @@ if gen_quality_metrics
     
     % Set caption after suptitle; otherwise, they go off the edge of the
     % plot
-    if strcmp(iter_vars{iter_type},'cal_reg')
+    if regenerate_mask
         plot_ind = 1;
-        for ii = 1:length(iter_vars)
+        for ii = 1:length(iter_values)
             % Show effective acceleration when calibration region is changed
             % (if iterating over that variable)
             % Add caption to each row
             axl = axis(s(plot_ind));
             text(s(plot_ind),0.05*axl(2),0.05*axl(3)+0.95*axl(4),...
-                sprintf('actual accel: %.2f',effective_acc(ii)),'FontSize',12)
+                sprintf('actual accel: %.2f',actual_accel(ii)),'FontSize',12)
             plot_ind = plot_ind + 3;
         end
     end
     
-    saveas(qm_fig,sprintf('%s/recon_qm_%s%s.fig',fig_dirpath,xlbl(1),recon_str))
-    saveas(qm_fig,sprintf('%s/recon_qm_%s%s.png',fig_dirpath,xlbl(1),recon_str))
+    saveas(qm_fig,sprintf('%s/recon_qm_%s%s%s%s.fig',fig_dirpath,mask,sense_flag,xlbl(1),recon_str))
+    saveas(qm_fig,sprintf('%s/recon_qm_%s%s%s%s.png',fig_dirpath,mask,sense_flag,xlbl(1),recon_str))
     
-    if mult_zf_qm
+    if regenerate_mask
         num_repeats = 1;
     else
         num_repeats = length(iter_values);
@@ -895,9 +915,15 @@ if gen_quality_metrics
     s2(1) = subplot(1,3,1); plot(iter_values,repmat(mean(rlne_zero),1,num_repeats),'k');hold on;
     plot(iter_values,mean(rlne_espirit));title('Relative L2-Norm Error')
     s2(2) = subplot(1,3,2); plot(iter_values,repmat(mean(psnr_zero),1,num_repeats),'k');hold on; plot(iter_values,mean(psnr_espirit))
-    title('Peak Signal to Noise Ratio');s2_axl = axis;
+    title('Peak Signal to Noise Ratio')
     s2(3) = subplot(1,3,3); plot(iter_values,repmat(mean(ssim_zero),1,num_repeats),'k');hold on; plot(iter_values,mean(ssim_espirit))
     title('Structural Similarity Index')
+    if gen_sense_recon
+        plot(s2(1),iter_values,mean(rlne_sense))
+        plot(s2(2),iter_values,mean(psnr_sense))
+        plot(s2(3),iter_values,mean(ssim_sense))
+    end
+    s2_axl = axis(s2(2));
     
     ylabel(s2(1),'\leftarrow RLNE')
     ylabel(s2(2),'PSNR \rightarrow')
@@ -907,9 +933,9 @@ if gen_quality_metrics
         xlim(s2(ii),[min(iter_values) max(iter_values)])
         set(s2(ii),'Position',[0.07+(ii-1)*0.33,0.13,0.25,0.7])
     end
-    legend('Zero-filled','ESPiRIT')
-    saveas(qm_mean_fig,sprintf('%s/mean_recon_qm_%s%s.fig',fig_dirpath,xlbl(1),recon_str))
-    saveas(qm_mean_fig,sprintf('%s/mean_recon_qm_%s%s.png',fig_dirpath,xlbl(1),recon_str))
+    legend(legend_str2)
+    saveas(qm_mean_fig,sprintf('%s/mean_recon_qm_%s%s%s%s.fig',fig_dirpath,mask,sense_flag,xlbl(1),recon_str))
+    saveas(qm_mean_fig,sprintf('%s/mean_recon_qm_%s%s%s%s.png',fig_dirpath,mask,sense_flag,xlbl(1),recon_str))
 end
 
 % % Modified RLNE/PSNR metrics
