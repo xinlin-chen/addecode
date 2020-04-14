@@ -1,4 +1,5 @@
 close all;clear;clc;
+clearvars -except 
 
 % If you don't want to run RussRecon (and install all the folders), set
 % load_data to false, download 'bruker_data.mat' and comment out all
@@ -12,18 +13,18 @@ close all;clear;clc;
 
 % BART must be installed for bart commands to work
 % %! means these settings must be changed for each user depending on where
-% your code/data/toolbox/BART path is
+% your code/data/toolbox/BART path is, or where you want to save figures
 % %* means you can toggle these options
 
-% main_dir = '/Users/janetchen/Documents/Bass Connections';
-% data_dir = '/Users/janetchen/Documents/Bass Connections';
-% bartpath = '/Applications/bart';
+main_dir = '/Users/janetchen/Documents/Bass Connections';
+data_dir = '/Users/janetchen/Documents/Bass Connections';
+bartpath = '/Applications/bart';
 
 %% Set, add directories
 
-main_dir = '/Users/alex/janet/Toolboxes'; %!
-data_dir = '/Users/alex/janet/Data'; %!
-bartpath = '/Users/alex/alex_code/bart-0.5.00'; %! Compiled path for kefalonia
+% main_dir = '/Users/alex/janet/Toolboxes'; %!
+% data_dir = '/Users/alex/janet/Data'; %!
+% bartpath = '/Users/alex/alex_code/bart-0.5.00'; %! Compiled path for kefalonia
 
 bartmatlabpath= [bartpath '/matlab'];
 
@@ -36,15 +37,15 @@ paths = {main_dir;[main_dir '/STI_Suite_v2/STI_Suite_v2.1/Source Code_v2.1'];...
     [main_dir '/NIfTI_20140122'];[main_dir '/MultipleEchoRecon'];...
     [main_dir '/XCalc'];addecode_dir};
 
-recon_along_x = true; % 14 February 2020--our protocols will recon along x instead of z.
+recon_along_x = true; %!! 14 February 2020--our protocols will recon along x instead of z.
 
 % If you need to extract the image data, you need to have the .work folder
 % in the data directory. If you're loading it in (and bruker_img.MAT should
 % be in the addecode main directory), you don't need this folder
 % workpath = [data_dir '/B04027.work'];
-workpath = [data_dir '/127']; % [data_dir '/127'];
+workpath = [data_dir '/127']; % [data_dir '/115'];
 % Re-center k-space. Set to false for B04027, which is already centered
-do_fft_shift = true;
+do_fft_shift = true; %!!
 y_shift = 10;
 
 addpath(bartmatlabpath)
@@ -74,37 +75,30 @@ load_mask = false; %* load sampling mask in? Currently, only BJ mask is saved
 num_iter = 1; % Number of sampling patterns/reconstructions to generate
 % (to get mean RLNE, PSNR values)
 
-%% Undersampling/recon settings
-
-% Undersampling parameters
-acceleration = 8; %* Undersample by a factor of <acceleration>
-cal_reg = 60; % Size of calibration region. 60
-
-% Reconstruction parameters
-reg_stepsize = 0.01; %* Size of regularization parameter. 0.01
-reg_method = 'l1'; %* Regularization method ('l1' or 'l2'). l1
-% caldir.c
-sense_cal_size = 20; %* Upper limit of calibration region size
-% ecalib.c
-espirit_cal_size = 20; %* Upper limit of calibration region size
-espirit_kernel_size = 5; %* Kernel size
-espirit_num_maps = 2; %* Number of sensitivity maps to calculate
+gen_quality_metrics = true; % Whether to generate quality metrics
+% (RLNE/PSNR/SSIM) for each slice
 
 %% Plot settings
 
 ksp_bwh = [0.08 0.29 0.8]; %* Bottom position and size of plots of K-space
 %* Width and height of images in plot comparing reconstruction quality
-wh = [0.4,0.3];
+recon_wh = [0.325,0.35];
+poster_wh = [0.9,0.32]; %0.28];
+cols = 'kbrgmc';
 show_recon_steps = false; %* Show sampling pattern, calibration maps, etc.?
 gen_recon_plots = false; %* Generate plot comparing reconstruction quality?
 %* Save plot comparing reconstruction quality? Only saves plots if they were actually generated.
 save_recon_plots = false;
+gen_poster_plots = false; % Generate plots for Neuro poster session?
 gen_diff_maps = false; %* Generate difference maps
 
 % Directory in which to save image slices
-plot_dirpath = '/Users/janetchen/Documents/Bass Connections/Reconstructed images';
+recon_img_dirpath = '/Users/janetchen/Documents/Bass Connections/Reconstructed images'; %!
 %* Save 3D images (fully-sampled and undersampled-ESPIRiT recon images) to NIfTI file
-save_nifti = true;
+save_nifti = false;
+
+% Directory in which to save other figures
+fig_dirpath = '/Users/janetchen/Dropbox/Bass Connections/addecode/Figures'; %!
 
 %% Load or read in data
 
@@ -163,50 +157,73 @@ else
     end
 end
 
-%% Generate sampling pattern and undersample K-space
+ksp_dims = size(ksp_data);
 
-% Coil # for which to plot k space data and undersampling
-coil = 1;
+%% Reconstruction settings
 
-if bart_mask
-    % bart poisson -Y $dim -Z $dim -y $yaccel -z $zaccel -C $caldim -v -e mask
-    % -Y: dim 1. -Z: dim 2. -v: variable density (which the workshop uses)
-    % -e: elliptical scanning
-    % Default values: Y: 192, Z: 192, y: 1.5, z: 1.5, C: 32
-    % ~25% of elements in und2x2 in espirit.m were nonzero
-    % !!! Although this should reflect 9216 points, only 8005 points are
-    % generated
-    num_points = sz_x*sz_y/acceleration;
-    
-    % Sampling pattern. Binary mask (ones and zeros), where ones are the
-    % only points that we sample
-    % Original output of BART command is 3 dimensional, with first
-    % dimension of length 1, so squeeze to remove this dimension
-    % C manually tuned to 60 for best reconstruction results
-    sampling_pattern = squeeze(bart(sprintf('poisson -Y %d -Z %d -y 1 -z 1 -C %d -R %d -v -e',sz_x,sz_y,cal_reg,num_points)));
+% To run through all slices, set below to 1:size(ksp_data,<dimension of interest>)
+if recon_along_x
+    slices_to_generate = 1:ksp_dims(1); % 57 %* Reconstruct images for these slices
+    xlbl = 'X-axis slice';
 else
-    % Mask from BJ Anderson's code
-    if load_mask
-        load('bj_sampling_pattern.mat')
-    else
-        % Inputs
-        pa = 2.3;
-        pb = 5.6;
-        
-        % Sampling pattern. Logical binary mask (ones and zeros), where ones
-        % indicate the only points that we sample
-        sampling_pattern = sampling_mask(acceleration,sz_x,sz_y,pa,pb);
-    end
+    slices_to_generate = 1:ksp_dims(3);
+    xlbl = 'Z-axis slice';
+end
+% !!! Slices 68-72 have issues
+% slices_to_generate = 57;
+%* Z-axis slice to keep for reconstruction quality comparison (say you're
+% generating images for all slices but want to compare reconstruction
+% quality for one slice). Shows difference maps, quality metrics
+slices_to_compare = slices_to_generate;
+
+%% Undersampling/recon settings
+
+% Undersampling parameters
+acceleration = 4; %* Undersample by a factor of <acceleration>
+cal_reg = 60; % Size of calibration region. 60
+
+% Reconstruction parameters
+reg_stepsize = 1e-2; %* Size of regularization parameter. 0.01
+reg_method = 'l1'; %* Regularization method ('l1' or 'l2'). l1
+% caldir.c, ecalib.c
+recon_cal_size = cal_reg; %* Upper limit of calibration region size
+espirit_kernel_size = 5; %* Kernel size
+espirit_num_maps = 4; %* Number of sensitivity maps to calculate
+gen_sense_recon = false; % Generate SENSE reconstruction?
+
+%% Grid search
+% Choose variable to iterate over
+iter_vars = {'acceleration','cal_reg','reg_stepsize',...
+    'espirit_kernel_size','espirit_num_maps'};
+% Set iteration type from options in cell above
+iter_type = 2; % Set to 0 to not iterate
+
+iter_var_titles = {'Acceleration','Calibration Region Size','Step-size',...
+    'Kernel Size','Number of maps'};
+if iter_type == 0
+    iter_values = NaN;
+else
+    %iter_values = 4:8;
+    %iter_values = 1:4; % maps
+    %iter_values = 2:9; % k size
+    iter_values = 30:10:80; % cal reg
+    %iter_values = [7.5e-3,1e-2,2.5e-2,5e-2,1e-1,5e-1]; %stepsize (slicing in x)
+    %iter_values = [1e-4,1e-3,5e-3,1e-2,5e-2,1e-1]; %stepsize (slicing in z)
 end
 
-% Show how much of the data is kept
-fprintf(sprintf('\tMask non-zero percentage: %.2f%%',length(find(sampling_pattern ~= 0))/numel(sampling_pattern)*100))
-fprintf('\n')
-
-ksp_dims = size(ksp_data);
-% Collect original and reconstructed images in 3D arrays
-fs_3d_img = zeros(ksp_dims(1:3));
-espirit_3d_img = zeros(ksp_dims(1:3));
+% If acceleration or calibration region is being changed, the sampling
+% pattern changes and therefore zero-filled reconstruction will also be
+% affected (meaning more than one zero-filled plot is needed per quality
+% metric for visualization purposes)
+if strcmp(iter_vars{iter_type},'acceleration') || ...
+        strcmp(iter_vars{iter_type},'cal_reg')
+    mult_zf_qm = true;
+else
+    % If something like regularization step-size is being changed,
+    % zero-filled reconstruction is not affected, and therefore you only
+    % need to compare one ZF recon with all the ESPiRIT/SENSE recons
+    mult_zf_qm = false;
+end
 
 %% Create simulated data from arbitrary images.
 % Most of this work belongs outside of the slice loop.
@@ -235,293 +252,665 @@ if ~use_espirit_data
     ksp_echo_n_ifft = fftshift(ifft(fftshift(ksp_echo_n_data,readout_dim),[],readout_dim),readout_dim);
 end
 
-%% Iterate through slices
+%% Iterate through desired recon settings
 
-% To run through all slices, set below to 1:size(ksp_data,3)
-slices_to_generate = 1:ksp_dims(1); %* Reconstruct images for these slices
-%* Z-axis slice to keep for reconstruction quality comparison (say you're
-% generating images for all slices but want to compare reconstruction
-% quality for one slice). Shows difference maps, quality metrics
-slices_to_compare = slices_to_generate;
-
-
-% !!! Slices 68-72 have issues
-for slice = slices_to_generate
-    if use_espirit_data
-        % img is 1x230x180x8
-        % Swap x, y, z dimensions so 3rd dimension is 1
-        ksp_data_echo_n_z1 = permute(ksp_data(1,:,:,1:num_coils),[2,3,1,4]);
-        % Take inverse Fourier transform
-        coilimg = bart('fft -i 6', ksp_data);
-        % Take the root sum of squares to produce one image from multiple coils
-        fs_finalimg = bart('rss 4',squeeze(coilimg));
-        slice = 1; % Original X dimension is 1 in length, so use that 'slice'
-    else
-        
-        % Take the z-axis slice
-        % coilimg = ksp_echo_n_ifft(:,:,slice,:);
-        
-        if (recon_along_x)
-            ksp_data_echo_n_z1 = squeeze(ksp_echo_n_ifft(slice,:,:,:));
+for iter = 1:length(iter_values)
+    %% Generate sampling pattern and undersample K-space
+    if iter == 1 || mult_zf_qm % Re-generate if acceleration or calibration region is changed
+        % Coil # for which to plot k space data and undersampling
+        coil = 1;
+        if bart_mask
+            % bart poisson -Y $dim -Z $dim -y $yaccel -z $zaccel -C $caldim -v -e mask
+            % -Y: dim 1. -Z: dim 2. -v: variable density (which the workshop uses)
+            % -e: elliptical scanning
+            % Default values: Y: 192, Z: 192, y: 1.5, z: 1.5, C: 32
+            % ~25% of elements in und2x2 in espirit.m were nonzero
+            % !!! Although this should reflect 9216 points, only 8005 points are
+            % generated
+            num_points = sz_x*sz_y/acceleration;
+            
+            % Sampling pattern. Binary mask (ones and zeros), where ones are the
+            % only points that we sample
+            % Original output of BART command is 3 dimensional, with first
+            % dimension of length 1, so squeeze to remove this dimension
+            % C manually tuned to 60 for best reconstruction results
+            sampling_pattern = squeeze(bart(sprintf('poisson -Y %d -Z %d -y 1 -z 1 -C %d -R %d -v -e',sz_x,sz_y,cal_reg,num_points)));
         else
-            ksp_data_echo_n_z1 = squeeze(ksp_echo_n_ifft(:,:,slice,:));
+            % Mask from BJ Anderson's code
+            if load_mask
+                load('bj_sampling_pattern.mat')
+            else
+                % Inputs
+                pa = 2.3;
+                pb = 5.6;
+                
+                % Sampling pattern. Logical binary mask (ones and zeros), where ones
+                % indicate the only points that we sample
+                sampling_pattern = sampling_mask(acceleration,sz_x,sz_y,pa,pb);
+            end
         end
         
-        coilimg = bart('fft -i 7',ksp_data_echo_n_z1);
+        % Show how much of the data is kept. Even though acceleration can be set,
+        % the size of the calibration region affects the true ('effective')
+        % acceleration
         
-        % Take the root sum of squares to produce one image from multiple coils
-        fs_finalimg = bart('rss 4', squeeze(coilimg));
+        effective_acc(iter) = 1/(length(find(sampling_pattern ~= 0))/numel(sampling_pattern));
+        fprintf(sprintf('\tMask non-zero percentage: %.2f%%',100/effective_acc(iter)))
+        fprintf('\n')
     end
     
-    % Zero out unsampled areas through element-by-element multiplication with
-    % sampling pattern
-    % 'us' means 'undersampled'
-    us_ksp_echo_n_z1 = bart('fmac',squeeze(ksp_data_echo_n_z1),sampling_pattern);
-    % Equivalently: squeeze(ksp_data_echo_n_z1).*sampling_pattern;
-    
-    %% Zero-filled reconstruction versus ESPIRiT
-    
-    % Zero-filled reconstruction (i.e. direct rss from undersampled data)
-    % Do IFFT to get image data
-    us_coilimg = bart('fft -i 7',us_ksp_echo_n_z1);
-    % Combine coil data using root sum of squares. Reconstruction from under-
-    % sampled data without use of calibration/PICS is known as zero-filled
-    % econstruction
-    zerofilled_finalimg = bart('rss 4', us_coilimg);
-    
-    % Add singleton dimension so first 3 dimensions reflect x, y, z
-    if recon_along_x
-        us_ksp_data_echo_n_slice = permute(us_ksp_echo_n_z1,[4,1,2,3]);
-    else
-        us_ksp_data_echo_n_slice = permute(us_ksp_echo_n_z1,[1,2,4,3]);
+    if iter_type > 0
+        % Step through values for iterating variable
+        eval(sprintf('%s = %d;',iter_vars{iter_type},iter_values(iter)))
     end
+    % !!! Now, peg ESPiRIT calibration region size to sampling region size
+    % if it changes
+    recon_cal_size = cal_reg;
     
-    % SENSE reconstruction (direct calibration from k-space center)
-    % Maps generated using autocalibration
-    % !!!Increasing caldir size seems to improve recon? Attempted up to 60
-    sense_maps = bart(sprintf('caldir %d',sense_cal_size), us_ksp_data_echo_n_slice);
-    % 'PICS' - parallel-imaging compressed-sensing reconstruction
-    % Use sliced, undersampled k space data and generated maps to reconstruct
-    % image
-    % r: regularization parameter, set to 0.001 in Uecker 2014 paper:
-    % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4142121/
-    sense_finalimg = squeeze(bart(sprintf('pics -%s -r%d',reg_method,reg_stepsize), us_ksp_data_echo_n_slice, sense_maps));
+    % Collect original and reconstructed images in 3D arrays
+    fs_3d_img = zeros(ksp_dims(1:3)); % Fully sampled
+    zf_3d_img = zeros(ksp_dims(1:3)); % Undersampled, zero-filled
+    espirit_3d_img = zeros(ksp_dims(1:3)); % Recon using espirit
+    sense_3d_img = zeros(ksp_dims(1:3));
     
-    % ESPIRiT reconstruction
-    
-    % Maps generated using ESPIRiT calibration
-    % % Dimensions from espirit.m:
-    % % Input to this was 1x230x180x8 (breaks if input is 3D). Expects 3 k space
-    % % dimensions, 1 coil dimension
-    % % calib dims: 1x230x180x8x2 (two sets of maps)
-    % % emaps dims: 1x230x180x1x2
-    % % r: cal size. k: kernel size. m: # maps.
-    % Don't increase kernel size past 5 - details start to disappear
-    espirit_maps = bart(sprintf('ecalib -r %d -k %d -m %d',espirit_cal_size,...
-        espirit_kernel_size,espirit_num_maps),us_ksp_data_echo_n_slice); %bart('ecalib -S', us_img_slice_dim4);
-    % size of input 1 = size of input 2
-    % l1-wavelet, l2 regularization
-    % r: regularization parameter (0.001 in Uecker 2014 paper:
-    % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4142121/)
-    % 'pics -l1 -r0.01
-    espirit_coilimg = squeeze(bart(sprintf('pics -%s -r%d',reg_method,...
-        reg_stepsize), us_ksp_data_echo_n_slice, espirit_maps));
-    espirit_finalimg = bart('rss 4', espirit_coilimg); % 16 if 'squeeze' not used above
-    
-    %% Figures
-    if ismember(slice,slices_to_compare)
-        if show_recon_steps
-            fig = figure;
-            ax = gca;
-            
-            imshow(abs(fs_finalimg'),[])
-            % For some reason, when you've used imshow and you don't put in the current
-            % axis, the title appears on the previous axis
-            title(ax,'(a) Original image','FontSize',15)
-            set(fig,'Position',[50 600 300 250])
-            %axis image ij
-            % Plot the original k space, sampling mask, and undersampled k space for
-            % previously sliced data
-            % If data were generated multiple times, the k space/calib maps from the
-            % last iteration will be plotted
-            fig2 = figure;
-            s1 = subplot(1,3,1);
-            
-            %imagesc(abs(squeeze(ksp_data_echo_n_z1(:,:,coil))))
-            imagesc(abs(squeeze(ksp_data_echo_n_z1(:,:,coil)))')
-            
-            title(sprintf('(a) Original K-space (coil %d)',coil),'FontSize',15)
-            set(s1,'Position',[0.03 ksp_bwh])
-            
-            s2 = subplot(1,3,2);
-            imagesc(sampling_pattern');
-            title('(b) Sampling pattern','FontSize',15)
-            set(s2,'Position',[0.36 ksp_bwh])
-            
-            s3 = subplot(1,3,3);
-            
-            imagesc(squeeze(abs(us_ksp_echo_n_z1(:,:,1,coil)))')
-            title(sprintf('(c) Undersampled K-space (coil %d)',coil),'FontSize',15)
-            set(s3,'Position',[0.7 ksp_bwh])
+    %% Reconstruct every slice
+    for slice = slices_to_generate
+        if use_espirit_data
+            % img is 1x230x180x8
+            % Swap x, y, z dimensions so 3rd dimension is 1
+            ksp_data_echo_n_z1 = permute(ksp_data(1,:,:,1:num_coils),[2,3,1,4]);
+            % Take inverse Fourier transform
+            coilimg = bart('fft -i 6', ksp_data);
+            % Take the root sum of squares to produce one image from multiple coils
+            fs_finalimg = bart('rss 4',squeeze(coilimg));
+            slice = 1; % Original X dimension is 1 in length, so use that 'slice'
+        else
+            % Take the x/z-axis slice
+            % coilimg = ksp_echo_n_ifft(:,:,slice,:);
             
             if recon_along_x
-                s = suptitle(sprintf('Slice %d of x-axis',slice));
+                ksp_data_echo_n_z1 = squeeze(ksp_echo_n_ifft(slice,:,:,:));
             else
-                s = suptitle(sprintf('Slice %d of z-axis',slice));
+                ksp_data_echo_n_z1 = squeeze(ksp_echo_n_ifft(:,:,slice,:));
             end
             
-            set(s,'FontSize',16,'FontWeight','bold')
-            set(fig2,'Position',[300 600 800 270])
+            coilimg = bart('fft -i 7',ksp_data_echo_n_z1);
             
-            % View ESPIRiT maps
-            fig3 = figure;
-            ax = gca;
-            
-            imshow3(abs(squeeze(espirit_maps)),[],[espirit_num_maps,num_coils])
-            title(ax,'ESPIRiT maps','FontSize',15)
-            set(fig3,'Position',[50 100 400 130*espirit_num_maps])
-            set(ax,'Position',[0.05 0.04 0.9 0.88])
+            % Take the root sum of squares to produce one image from multiple coils
+            fs_finalimg = bart('rss 4', squeeze(coilimg));
         end
         
-        if gen_recon_plots
-            % Comparisons of different reconstruction methods
-            % Plot images from last iteration
-            % Zero-filled reconstruction
-            fig4 = figure;
-            subplot(2,3,[1 4])
-            fs_ax = gca;
-            imshow(fs_finalimg',[]);colormap('gray')
-            title('(a) Original image','FontSize',15);
-            
-            subplot(2,3,2)
-            ax = gca;
-            imshow(zerofilled_finalimg',[])
-            title(ax,'(b) Zero-filled recon','FontSize',15);
-            posn(1,:) = get(ax,'Position');
-            
-            subplot(2,3,3)
-            ax(2) = gca;
+        % Zero out unsampled areas through element-by-element multiplication with
+        % sampling pattern
+        % 'us' means 'undersampled'
+        us_ksp_echo_n_z1 = bart('fmac',squeeze(ksp_data_echo_n_z1),sampling_pattern);
+        % Equivalently: squeeze(ksp_data_echo_n_z1).*sampling_pattern;
+        
+        %% Zero-filled reconstruction versus ESPIRiT
+        
+        % Zero-filled reconstruction (i.e. direct rss from undersampled data)
+        % Do IFFT to get image data
+        us_coilimg = bart('fft -i 7',us_ksp_echo_n_z1);
+        % Combine coil data using root sum of squares. Reconstruction from under-
+        % sampled data without use of calibration/PICS is known as zero-filled
+        % econstruction
+        zf_finalimg = bart('rss 4', us_coilimg); % Zero-filled final img
+        
+        % Add singleton dimension so first 3 dimensions reflect x, y, z
+        if recon_along_x
+            us_ksp_data_echo_n_slice = permute(us_ksp_echo_n_z1,[4,1,2,3]);
+        else
+            us_ksp_data_echo_n_slice = permute(us_ksp_echo_n_z1,[1,2,4,3]);
+        end
+        
+        if gen_sense_recon || gen_recon_plots
+            % SENSE reconstruction (direct calibration from k-space center)
+            % Maps generated using autocalibration
+            % !!!Increasing caldir size seems to improve recon? Attempted up to 60
+            sense_maps = bart(sprintf('caldir %d',recon_cal_size), us_ksp_data_echo_n_slice);
+            % 'PICS' - parallel-imaging compressed-sensing reconstruction
+            % Use sliced, undersampled k space data and generated maps to reconstruct
+            % image
+            % r: regularization parameter, set to 0.001 in Uecker 2014 paper:
+            % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4142121/
+            sense_finalimg = squeeze(bart(sprintf('pics -%s -r%d',reg_method,reg_stepsize), us_ksp_data_echo_n_slice, sense_maps));
+        end
+        
+        % ESPIRiT reconstruction
+        
+        % Maps generated using ESPIRiT calibration
+        % % Dimensions from espirit.m:
+        % % Input to this was 1x230x180x8 (breaks if input is 3D). Expects 3 k space
+        % % dimensions, 1 coil dimension
+        % % calib dims: 1x230x180x8x2 (two sets of maps)
+        % % emaps dims: 1x230x180x1x2
+        % % r: cal size. k: kernel size. m: # maps.
+        % Don't increase kernel size past 5 - details start to disappear
+        espirit_maps = bart(sprintf('ecalib -r %d -k %d -m %d',recon_cal_size,...
+            espirit_kernel_size,espirit_num_maps),us_ksp_data_echo_n_slice); %bart('ecalib -S', us_img_slice_dim4);
+        % size of input 1 = size of input 2
+        % l1-wavelet, l2 regularization
+        % r: regularization parameter (0.001 in Uecker 2014 paper:
+        % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4142121/)
+        % 'pics -l1 -r0.01
+        espirit_coilimg = squeeze(bart(sprintf('pics -%s -r%d',reg_method,...
+            reg_stepsize), us_ksp_data_echo_n_slice, espirit_maps));
+        espirit_finalimg = bart('rss 4', espirit_coilimg); % 16 if 'squeeze' not used above
+        
+        if recon_along_x && gen_recon_plots
             espirit_map1_finalimg = abs(espirit_coilimg(:,:,1));
-            imshow(espirit_map1_finalimg', [])
-            title(ax(2),'(c) ESPIRiT recon (map 1)','FontSize',15)
-            posn(2,:) = get(ax(2),'Position');
-            
-            % This image should be the most accurate/closest to image from fully
-            % sampled k space
-            subplot(2,3,5)
-            ax(3) = gca;
-            imshow(espirit_finalimg',[]);
-            title(ax(3),'(d) ESPIRiT rss','FontSize',15)
-            posn(3,:) = get(ax(3),'Position');
-            
-            subplot(2,3,6)
-            ax(4) = gca;
-            imshow(abs(sense_finalimg'),[])
-            title(ax(4),'(e) SENSE recon','FontSize',15)
-            set(fig4,'Position',[400 100 520 300])
-            posn(4,:) = get(ax(4),'Position');
-            
-            % Reposition image axes
-            % Shift to same column position
-            posn([1,3],1) = 0.28;posn([2,4],1) = 0.62;
-            % Shift to same row position
-            posn([1,2],2) = posn([1,2],2)-0.04;posn([3,4],2) = posn([3,4],2)-0.04;
-            posn(:,[3,4]) = repmat(wh,4,1);
-            fs_posn = get(fs_ax,'Position'); fs_posn=[-0.04 0.33 wh];
-            set(fs_ax,'Position',fs_posn)
-            for ii = 1:size(posn,1)
-                set(ax(ii),'Position',posn(ii,:))
+            fs_finalimg = fs_finalimg';
+            zf_finalimg = zf_finalimg';
+            espirit_map1_finalimg = espirit_map1_finalimg';
+            espirit_finalimg = espirit_finalimg';
+            sense_finalimg = sense_finalimg';
+        end
+        
+        %% Figures
+        if ismember(slice,slices_to_compare)
+            if show_recon_steps
+                fig = figure;
+                ax = gca;
+                
+                imshow(abs(fs_finalimg'),[])
+                % For some reason, when you've used imshow and you don't put in the current
+                % axis, the title appears on the previous axis
+                title(ax,'(a) Original image','FontSize',16)
+                set(fig,'Position',[50 600 300 250])
+                %axis image ij
+                % Plot the original k space, sampling mask, and undersampled k space for
+                % previously sliced data
+                % If data were generated multiple times, the k space/calib maps from the
+                % last iteration will be plotted
+                fig2 = figure;
+                s1 = subplot(1,3,1);
+                
+                %imagesc(abs(squeeze(ksp_data_echo_n_z1(:,:,coil))))
+                imagesc(abs(squeeze(ksp_data_echo_n_z1(:,:,coil)))')
+                
+                title(sprintf('(a) Original K-space (coil %d)',coil),'FontSize',16)
+                set(s1,'Position',[0.03 ksp_bwh])
+                
+                s2 = subplot(1,3,2);
+                imagesc(sampling_pattern');
+                title('(b) Sampling pattern','FontSize',16)
+                set(s2,'Position',[0.36 ksp_bwh])
+                
+                s3 = subplot(1,3,3);
+                
+                imagesc(squeeze(abs(us_ksp_echo_n_z1(:,:,1,coil)))')
+                title(sprintf('(c) Undersampled K-space (coil %d)',coil),'FontSize',16)
+                set(s3,'Position',[0.7 ksp_bwh])
+                
+                if recon_along_x
+                    s = suptitle(sprintf('Slice %d of x-axis',slice));
+                else
+                    s = suptitle(sprintf('Slice %d of z-axis',slice));
+                end
+                
+                set(s,'FontSize',16,'FontWeight','bold')
+                set(fig2,'Position',[300 600 800 270])
+                
+                % View ESPIRiT maps
+                fig3 = figure;
+                ax = gca;
+                
+                imshow3(abs(squeeze(espirit_maps)),[],[espirit_num_maps,num_coils])
+                title(ax,'ESPIRiT maps','FontSize',15)
+                set(fig3,'Position',[50 100 400 130*espirit_num_maps])
+                set(ax,'Position',[0.05 0.04 0.9 0.88])
             end
             
-            if save_recon_plots
-                %set(gcf,'Color','none')
-                saveas(fig4,sprintf('%s/Slice %d.png',plot_dirpath,slice))
+            if gen_recon_plots
+                posn = zeros(4,4);
+                % Comparisons of different reconstruction methods
+                % Plot images from last iteration
+                % Zero-filled reconstruction
+                fig4 = figure;
+                subplot(2,3,[1 4])
+                fs_ax = gca;
+                imshow(fs_finalimg,[]);colormap('gray')
+                title('(a) Original image','FontSize',16);
+                
+                subplot(2,3,2)
+                ax = gca;
+                imshow(zf_finalimg,[])
+                title(ax,'(b) Zero-filled recon','FontSize',16);
+                posn(1,:) = get(ax,'Position');
+                
+                subplot(2,3,3)
+                ax(2) = gca;
+                imshow(espirit_map1_finalimg', [])
+                title(ax(2),'(c) ESPIRiT recon (map 1)','FontSize',16)
+                posn(2,:) = get(ax(2),'Position');
+                
+                % This image should be the most accurate/closest to image from fully
+                % sampled k space
+                subplot(2,3,5)
+                ax(3) = gca;
+                imshow(espirit_finalimg,[]);
+                title(ax(3),'(d) ESPIRiT recon (all maps)','FontSize',16)
+                posn(3,:) = get(ax(3),'Position');
+                
+                subplot(2,3,6)
+                ax(4) = gca;
+                imshow(abs(sense_finalimg),[])
+                title(ax(4),'(e) SENSE recon','FontSize',16)
+                set(fig4,'Position',[400 100 1000 625])
+                posn(4,:) = get(ax(4),'Position');
+                
+                % Reposition image axes
+                % Shift to same column position
+                posn([1,3],1) = 0.335;posn([2,4],1) = 0.67;
+                % Shift row position
+                posn([1,2],2) = posn([1,2],2)-0.04;posn([3,4],2) = posn([3,4],2)-0.04;
+                posn(:,[3,4]) = repmat(recon_wh,4,1);
+                fs_posn = get(fs_ax,'Position'); fs_posn=[0 0.31 recon_wh];
+                set(fs_ax,'Position',fs_posn)
+                for ii = 1:size(posn,1)
+                    set(ax(ii),'Position',posn(ii,:))
+                end
+                
+                if save_recon_plots
+                    %set(gcf,'Color','none')
+                    saveas(fig4,sprintf('%s/Slice %d.png',recon_img_dirpath,slice))
+                end
+            end
+            
+            if gen_poster_plots
+                posn = zeros(3,4);
+                % Comparisons of different reconstruction methods
+                % Plot images from last iteration
+                % Zero-filled reconstruction
+                poster_fig = figure;
+                subplot(3,1,1)
+                ax = gca;
+                imshow(fs_finalimg,[]);colormap('gray')
+                %             ylabel('(a) Original image','FontSize',22,'FontWeight',...
+                %                 'bold','Position',[-5 96 0])
+                posn(1,:) = get(ax(1),'Position');
+                
+                subplot(3,1,2)
+                ax(2) = gca;
+                imshow(zf_finalimg,[])
+                %             ylabel({'(b) Zero-filled','reconstruction'},'FontSize',...
+                %                 22,'FontWeight','bold','Position',[-5 96 0])
+                posn(2,:) = get(ax(2),'Position');
+                
+                % This image should be the most accurate/closest to image from fully
+                % sampled k space
+                subplot(3,1,3)
+                ax(3) = gca;
+                imshow(espirit_finalimg,[]);
+                %             ylabel('(c) CS reconstruction','FontSize',22,...
+                %                 'FontWeight','bold','Position',[-5 96 0])
+                posn(3,:) = get(ax(3),'Position');
+                
+                % Shift to same column position
+                posn(:,1) = 0.05;
+                % Shift to same row position
+                posn(1,2) = 0.67; posn(2,2) = 0.34; posn(3,2) = 0.01;
+                posn(:,[3,4]) = repmat(poster_wh,3,1);
+                
+                if recon_along_x
+                    set(poster_fig,'Position',[400 100 500 900])
+                else
+                    set(poster_fig,'Position',[400 100 400 900])
+                end
+                for ii = 1:size(posn,1)
+                    set(ax(ii),'Position',posn(ii,:))
+                end
+            end
+        end
+        
+        if recon_along_x
+            % Add current x-axis slice to 3D arrays
+            fs_3d_img(slice,:,:) = fs_finalimg;
+            zf_3d_img(slice,:,:) = zf_finalimg;
+            espirit_3d_img(slice,:,:) = espirit_finalimg;
+        else
+            % Add current z-axis slice to 3D arrays
+            fs_3d_img(:,:,slice) = fs_finalimg;
+            zf_3d_img(:,:,slice) = zf_finalimg;
+            espirit_3d_img(:,:,slice) = espirit_finalimg;
+        end
+        
+        %close all;%close(fig4)
+        
+        if gen_diff_maps && ismember(slice,slices_to_compare)
+            
+            fs_rss = permute(fs_finalimg,[3 1 2]); % Add singleton dimension to match other images
+            
+            % Fully sampled image
+            x = abs(squeeze(gs_normalize(fs_rss,255)));
+            % Zero-filled reconstruction
+            x_hat_zero = abs(gs_normalize(zf_finalimg,255));
+            % ESPIRiT reconstruction (2 combined maps)
+            x_hat_espirit = abs(gs_normalize(espirit_finalimg,255));
+            % SENSE reconstruction
+            x_hat_sense = abs(gs_normalize(sense_finalimg,255));
+            % Also assess using difference maps (?)
+            fig5 = figure;ax = gca;imshow([abs(x-x_hat_zero)',...
+                abs(x-x_hat_espirit)',...
+                abs(x-x_hat_sense)'],[]);
+            % For imshow, have to manually change current axes, otherwise the titles
+            % plot on the prev axes, and suptitle doesn't accept axes as an input
+            axes(ax);ax.FontSize = 13;
+            title(sprintf('(a) Zero-filled recon\t\t\t\t\t(b) ESPIRiT recon (2 maps)\t\t\t\t\t\t(c) SENSE recon'));
+            t = suptitle('Difference maps');set(t,'FontSize',16,'FontWeight','bold')
+            set(ax,'Position',[0.01 0.1 0.98 0.6])
+            set(fig5,'Position',[150 400 500 150])
+            
+            if gen_poster_plots
+                clear posn ax
+                % Comparisons of different reconstruction methods
+                % Plot images from last iteration
+                % Zero-filled reconstruction
+                poster_fig2 = figure;
+                subplot(3,1,1)
+                ax = gca;
+                if recon_along_x
+                    imshow(abs(x-x_hat_zero)',[]);
+                else
+                    imshow(abs(x-x_hat_zero),[]);
+                end
+                colormap('gray')
+                %             ylabel({'(a) Zero-filled','reconstruction'},'FontSize',22,...
+                %                 'FontWeight','bold','Position',[-5 96 0])
+                posn(1,:) = get(ax(1),'Position');
+                
+                subplot(3,1,2)
+                ax(2) = gca;
+                if recon_along_x
+                    imshow(abs(x-x_hat_espirit)',[])
+                else
+                    imshow(abs(x-x_hat_espirit),[])
+                end
+                %             ylabel('(b) CS reconstruction','FontSize',22,...
+                %                 'FontWeight','bold','Position',[-5 96 0])
+                posn(2,:) = get(ax(2),'Position');
+                
+                % Shift to same column position
+                posn(:,1) = 0.08;
+                % Shift row position
+                posn(2,2) = 0.03;
+                if recon_along_x
+                    set(poster_fig2,'Position',[100 100 500 500])
+                    posn(:,[3,4]) = repmat([0.9,0.45],2,1);
+                    posn(1,2) = 0.51;
+                else
+                    set(poster_fig2,'Position',[100 100 350 500])
+                    posn(:,[3,4]) = repmat([0.9,0.39],2,1);
+                    posn(1,2) = 0.61;
+                end
+                
+                for ii = 1:size(posn,1)
+                    set(ax(ii),'Position',posn(ii,:))
+                end
+            end
+        end
+        fprintf(sprintf('Reconstructed slice %d\n',slice))
+    end
+    
+    if save_nifti
+        fs_nii = make_nii(fs_3d_img,[],ksp_dims(1:3),64);
+        save_nii(fs_nii,sprintf('%s/fs_img.nii',main_dir));
+        
+        espirit_nii = make_nii(espirit_3d_img, [], ksp_dims(1:3), 64);
+        save_nii(espirit_nii,sprintf('%s/espirit_recon.nii',main_dir));
+    end
+    
+    if gen_quality_metrics
+        for slice = slices_to_compare
+            % Assess quality of reconstruction for a slice
+            % https://onlinelibrary.wiley.com/doi/full/10.1002/ima.22260
+            % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5240324/
+            % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4917755/
+            % Relative L2-norm error (RLNE), high frequency error norm (HFEN) (?),
+            % peak signal-to-noise ratio (PSNR), structural similarity (SSIM)
+            % For these metrics, normalize data to range from 0-255
+            
+            % fs_rss = permute(fs_img(slice,:,:),[3 1 2]); % Add singleton dimension to match other images
+            
+            if recon_along_x
+                fs_rss = squeeze(fs_3d_img(slice,:,:)); % Add singleton dimension to match other images
+                zf_img = squeeze(zf_3d_img(slice,:,:));
+                espirit_img = squeeze(espirit_3d_img(slice,:,:));
+            else
+                fs_rss = squeeze(fs_3d_img(:,:,slice)); % Add singleton dimension to match other images
+                zf_img = squeeze(zf_3d_img(:,:,slice));
+                espirit_img = squeeze(espirit_3d_img(:,:,slice));
+            end
+            
+            % !!! Update code to calculate these even if this statement isn't
+            % entered, because RLNE/PSNR is calculated outside of this for loop
+            % Fully sampled image
+            x = abs(squeeze(gs_normalize(fs_rss,255)));
+            % Zero-filled reconstruction
+            x_hat_zero = abs(gs_normalize(zf_img,255));
+            % ESPIRiT reconstruction (2 combined maps)
+            x_hat_espirit = abs(gs_normalize(espirit_img,255));
+            
+            % RLNE: ||x_hat-x||/||x||.
+            % Lower RLNE: reconstruction closer to fully sampled image
+            rlne_espirit(slice,iter) = get_rlne(x,x_hat_espirit);
+            
+            % PSNR: 20*log10(255/sqrt(MSE)).
+            % Higher PSNR: reconstructed pixel value more consistent to original image
+            psnr_espirit(slice,iter) = get_psnr(x,x_hat_espirit,255);
+            
+            % SSIM from MATLAB function
+            ssim_espirit(slice,iter) = ssim(x_hat_espirit,x);
+            
+            if iter == 1 || mult_zf_qm
+                rlne_zero(slice,iter) = get_rlne(x,x_hat_zero);
+                psnr_zero(slice,iter) = get_psnr(x,x_hat_zero,255);
+                ssim_zero(slice,iter) = ssim(x_hat_zero,x);
+            end
+            
+            if gen_sense_recon
+                if recon_along_x
+                    sense_img = squeeze(sense_3d_img(slice,:,:));
+                else
+                    sense_img = squeeze(sense_3d_img(:,:,slice));
+                end
+                % SENSE reconstruction
+                x_hat_sense = abs(gs_normalize(sense_img,255));
+                rlne_sense(slice,iter) = get_rlne(x,x_hat_sense);
+                psnr_sense(slice,iter) = get_psnr(x,x_hat_sense,255);
+                ssim_sense(slice,iter) = ssim(x_hat_sense,x);
             end
         end
     end
-    
-    if (recon_along_x)
-        % Add current x-axis slice to 3D arrays
-        fs_3d_img(slice,:,:) = fs_finalimg;
-        espirit_3d_img(slice,:,:) = espirit_finalimg;
+end
+
+% Plot reconstruction quality performance
+if gen_quality_metrics
+    qm_fig = figure;
+    if ~mult_zf_qm
+        num_plots = 3;
+        num_rows = 1;
+        zf_cols = cols;
+        set(qm_fig,'Position',[50 300 950 300])
+        if strcmp(iter_vars{iter_type},'reg_stepsize')
+            legend_str = {'Zero-filled'};
+            legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
+                sprintf('ESPIRiT, %1.0e',x),iter_values,'UniformOutput',false);
+        else
+            legend_str = {'Zero-filled'};
+            legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
+                sprintf('ESPIRiT, %d',x),iter_values,'UniformOutput',false);
+        end
     else
-        % Add current z-axis slice to 3D arrays
-        fs_3d_img(:,:,slice) = fs_finalimg;
-        espirit_3d_img(:,:,slice) = espirit_finalimg;
+        num_plots = 3*length(iter_values)*mult_zf_qm;
+        num_rows = ceil(num_plots/3);
+        zf_cols = repmat('k',1,size(rlne_zero,2));
+        cols = repmat('r',1,size(rlne_espirit,2));
+        legend_str2 = {'Zero-filled','ESPIRiT'};
+        set(qm_fig,'Position',[50 300 950 min([280*num_rows,700])])
+        if strcmp(iter_vars{iter_type},'reg_stepsize')
+            legend_str = arrayfun(@(x) ...
+                sprintf('ZF, %1.0e',x),iter_values,'UniformOutput',false);
+            legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
+                sprintf('ESPIRiT, %1.0e',x),iter_values,'UniformOutput',false);
+        else
+            legend_str = arrayfun(@(x) ...
+                sprintf('ZF, %d',x),iter_values,'UniformOutput',false);
+            legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
+                sprintf('ESPIRiT, %d',x),iter_values,'UniformOutput',false);
+        end
+    end
+    for ii = 1:num_plots
+        s(ii) = subplot(num_rows,3,ii);hold(s(ii),'on')
     end
     
-    
-    
-    %close all;%close(fig4)
-    
-    if gen_diff_maps && ismember(slice,slices_to_compare)
+    iter_var_str = strrep(iter_vars{iter_type},'_',' ');
+    % Plot individually so that line colors can be custom set
+    % Plot each type of reconstruction together (for grouping in legend)
+    for ii = 1:size(rlne_espirit,2)
+        plot_ind = 1+3*mult_zf_qm*(ii-1);
+        col = cols(mod(ii-1,length(cols))+1);
+        if floor((ii-1)/length(cols))>0
+            line_style = ':';
+        else
+            line_style = '--';
+        end
+        if ii == 1 || mult_zf_qm
+            zf_col = zf_cols(mod(ii-1,length(zf_cols))+1);
+            plot(s(plot_ind),rlne_zero(:,ii),zf_col,'LineWidth',1.5)
+            plot(s(plot_ind+1),psnr_zero(:,ii),zf_col,'LineWidth',1.5)
+            plot(s(plot_ind+2),ssim_zero(:,ii),zf_col,'LineWidth',1.5)
+        end
         
-        fs_rss = permute(fs_finalimg,[3 1 2]); % Add singleton dimension to match other images
+        plot(s(plot_ind),rlne_espirit(:,ii),[line_style,col],'LineWidth',1.5)
+        plot(s(plot_ind+1),psnr_espirit(:,ii),[line_style,col],'LineWidth',1.5)
+        plot(s(plot_ind+2),ssim_espirit(:,ii),[line_style,col],'LineWidth',1.5)
+        if mult_zf_qm
+        ylabel(s(plot_ind),{sprintf('%s %d',iter_var_str,iter_values(ii)),...
+            '\leftarrow RLNE'})
+        else
+            ylabel(s(plot_ind),'\leftarrow RLNE')
+        end
+        ylabel(s(plot_ind+1),'PSNR \rightarrow')
+        ylabel(s(plot_ind+2),'SSIM \rightarrow')
         
-        % Fully sampled image
-        x = abs(squeeze(gs_normalize(fs_rss,255)));
-        % Zero-filled reconstruction
-        x_hat_zero = abs(gs_normalize(zerofilled_finalimg,255));
-        % ESPIRiT reconstruction (2 combined maps)
-        x_hat_espirit = abs(gs_normalize(espirit_finalimg,255));
-        % SENSE reconstruction
-        x_hat_sense = abs(gs_normalize(sense_finalimg,255));
-        % Also assess using difference maps (?)
-        fig5 = figure;ax = gca;imshow([abs(x-x_hat_zero)',...
-            abs(x-x_hat_espirit)',...
-            abs(x-x_hat_sense)'],[]);
-        % For imshow, have to manually change current axes, otherwise the titles
-        % plot on the prev axes, and suptitle doesn't accept axes as an input
-        axes(ax);ax.FontSize = 13;
-        title(sprintf('(a) Zero-filled recon\t\t\t\t\t(b) ESPIRiT recon (2 maps)\t\t\t\t\t\t(c) SENSE recon'));
-        t = suptitle('Difference maps');set(t,'FontSize',16,'FontWeight','bold')
-        set(ax,'Position',[0.01 0.1 0.98 0.6])
-        set(fig5,'Position',[150 400 500 150])
+%         ylabel(s(plot_ind),'\leftarrow Relative L2-Norm Error')
+%         ylabel(s(plot_ind+1),'Peak Signal to Noise Ratio \rightarrow')
+%         ylabel(s(plot_ind+2),'Structural Similarity Index \rightarrow')
     end
-    fprintf(sprintf('Reconstructed slice %d\n',slice))
-end
-
-if save_nifti
-    fs_nii = make_nii(fs_3d_img,[],ksp_dims(1:3),64);
-    save_nii(fs_nii,sprintf('%s/fs_img.nii',main_dir));
     
-    espirit_nii = make_nii(espirit_3d_img, [], ksp_dims(1:3), 64);
-    save_nii(espirit_nii,sprintf('%s/espirit_recon.nii',main_dir));
+    for ii = 1:num_plots
+        set(s(ii),'FontSize',13)
+        if ii>num_plots-3
+            xlabel(s(ii),xlbl)
+        end
+    end
+    
+    non_iter = setdiff(1:length(iter_vars),iter_type);
+    recon_str = '';
+    for ii = non_iter
+        eval(['curr_var = ',iter_vars{ii},';'])
+        recon_ind = [1,(regexp(iter_vars{ii},'_')+1)];
+        if strcmp(iter_vars{ii},'reg_stepsize')
+            recon_str = [recon_str,'_',iter_vars{ii}(recon_ind),sprintf('%1.0g',curr_var)];
+        else
+            recon_str = [recon_str,'_',iter_vars{ii}(recon_ind),sprintf('%d',curr_var)];
+        end
+    end
+    
+    if gen_sense_recon
+        for ii = 1:size(rlne_sense,2)
+            plot_ind = 1+3*mult_zf_qm*(ii-1);
+            plot(s(plot_ind),rlne_sense,[':',cols(ii)],'LineWidth',1.5)
+            plot(s(plot_ind+1),psnr_sense,[':',cols(ii)],'LineWidth',1.5)
+            plot(s(plot_ind+2),ssim_sense,[':',cols(ii)],'LineWidth',1.5)
+        end
+        if strcmp(iter_vars{iter_type},'reg_stepsize')
+            legend_str{end+1:end+length(iter_values)} = arrayfun(@(x) ...
+                sprintf('SENSE, %1.0e',x),iter_values,'UniformOutput',false);
+        else
+            legend_str{end+1:end+length(iter_values)} = arrayfun(@(x) ...
+                sprintf('SENSE, %d',x),iter_values,'UniformOutput',false);
+        end
+        [~,min_rlne_ind] = min(mean([rlne_zero,rlne_espirit,rlne_sense]));
+        title(s(1),['RLNE (best: ',legend_str{min_rlne_ind},')'])
+        [~,max_psnr_ind] = max(mean([psnr_zero,psnr_espirit,psnr_sense]));
+        title(s(2),['PSNR (best: ',legend_str{max_psnr_ind},')'])
+        [~,max_ssim_ind] = max(mean([ssim_zero,ssim_espirit,ssim_sense]));
+        title(s(3),['SSIM (best: ',legend_str{max_ssim_ind},')'])
+    else
+        [~,min_rlne_ind] = min(mean([rlne_zero,rlne_espirit]));
+        title(s(1),['RLNE (best: ',legend_str{min_rlne_ind},')'])
+        [~,max_psnr_ind] = max(mean([psnr_zero,psnr_espirit]));
+        title(s(2),['PSNR (best: ',legend_str{max_psnr_ind},')'])
+        [~,max_ssim_ind] = max(mean([ssim_zero,ssim_espirit]));
+        title(s(3),['SSIM (best: ',legend_str{max_ssim_ind},')'])
+    end
+    
+    if mult_zf_qm
+        l = legend(s(3),legend_str2);
+        l.Location = 'northeast';
+        l.Position(1) = 0.9;
+    else
+        l = legend(legend_str);
+        if ~gen_sense_recon
+            l.Position([1,2]) = [0.885,0.44];
+        end
+        for ii = 1:length(s)
+            set(s(ii),'Position',[0.05+(ii-1)*0.295,0.13,0.24,0.7])
+        end
+        title(l,iter_var_str)
+    end
+    l.ItemTokenSize = [25,15];
+    s_ttl = suptitle(['Reconstruction performance over ',lower(iter_var_titles{iter_type})]);
+    set(s_ttl,'FontSize',19,'FontWeight','bold')%,'Position',[mean(s2_axl(1:2)),1.13*s2_axl(4)-0.13*s2_axl(3)])
+    
+    % Set caption after suptitle; otherwise, they go off the edge of the
+    % plot
+    if strcmp(iter_vars{iter_type},'cal_reg')
+        plot_ind = 1;
+        for ii = 1:length(iter_vars)
+            % Show effective acceleration when calibration region is changed
+            % (if iterating over that variable)
+            % Add caption to each row
+            axl = axis(s(plot_ind));
+            text(s(plot_ind),0.05*axl(2),0.05*axl(3)+0.95*axl(4),...
+                sprintf('actual accel: %.2f',effective_acc(ii)),'FontSize',12)
+            plot_ind = plot_ind + 3;
+        end
+    end
+    
+    saveas(qm_fig,sprintf('%s/recon_qm_%s%s.fig',fig_dirpath,xlbl(1),recon_str))
+    saveas(qm_fig,sprintf('%s/recon_qm_%s%s.png',fig_dirpath,xlbl(1),recon_str))
+    
+    if mult_zf_qm
+        num_repeats = 1;
+    else
+        num_repeats = length(iter_values);
+    end
+    
+    qm_mean_fig = figure; set(qm_mean_fig,'Position',[50 300 700 300])
+    s_ttl2 = suptitle(['Mean reconstruction performance over ',lower(iter_var_titles{iter_type})]);
+    set(s_ttl2,'FontSize',19,'FontWeight','bold')
+    s2(1) = subplot(1,3,1); plot(iter_values,repmat(mean(rlne_zero),1,num_repeats),'k');hold on;
+    plot(iter_values,mean(rlne_espirit));title('Relative L2-Norm Error')
+    s2(2) = subplot(1,3,2); plot(iter_values,repmat(mean(psnr_zero),1,num_repeats),'k');hold on; plot(iter_values,mean(psnr_espirit))
+    title('Peak Signal to Noise Ratio');s2_axl = axis;
+    s2(3) = subplot(1,3,3); plot(iter_values,repmat(mean(ssim_zero),1,num_repeats),'k');hold on; plot(iter_values,mean(ssim_espirit))
+    title('Structural Similarity Index')
+    
+    ylabel(s2(1),'\leftarrow RLNE')
+    ylabel(s2(2),'PSNR \rightarrow')
+    ylabel(s2(3),'SSIM \rightarrow')
+    for ii = 1:3
+        xlabel(s2(ii),iter_var_titles{iter_type});set(s2(ii),'FontSize',13)
+        xlim(s2(ii),[min(iter_values) max(iter_values)])
+        set(s2(ii),'Position',[0.07+(ii-1)*0.33,0.13,0.25,0.7])
+    end
+    legend('Zero-filled','ESPiRIT')
+    saveas(qm_mean_fig,sprintf('%s/mean_recon_qm_%s%s.fig',fig_dirpath,xlbl(1),recon_str))
+    saveas(qm_mean_fig,sprintf('%s/mean_recon_qm_%s%s.png',fig_dirpath,xlbl(1),recon_str))
 end
-
-% Assess quality of reconstruction for a slice
-% https://onlinelibrary.wiley.com/doi/full/10.1002/ima.22260
-% https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5240324/
-% https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4917755/
-% Relative L2-norm error (RLNE), high frequency error norm (HFEN) (?),
-% peak signal-to-noise ratio (PSNR), structural similarity (SSIM)
-% For these metrics, normalize data to range from 0-255
-
-fs_rss = permute(fs_finalimg,[3 1 2]); % Add singleton dimension to match other images
-
-% !!! Update code to calculate these even if this statement isn't
-% entered, because RLNE/PSNR is calculated outside of this for loop
-% Fully sampled image
-x = abs(squeeze(gs_normalize(fs_rss,255)));
-% Zero-filled reconstruction
-x_hat_zero = abs(gs_normalize(zerofilled_finalimg,255));
-% ESPIRiT reconstruction (2 combined maps)
-x_hat_espirit = abs(gs_normalize(espirit_finalimg,255));
-% SENSE reconstruction
-x_hat_sense = abs(gs_normalize(sense_finalimg,255));
-
-% RLNE: ||x_hat-x||/||x||.
-% Lower RLNE: reconstruction closer to fully sampled image
-
-rlne_zero = get_rlne(x,x_hat_zero);
-rlne_espirit = get_rlne(x,x_hat_espirit);
-rlne_sense = get_rlne(x,x_hat_sense);
-
-% PSNR: 20*log10(255/sqrt(MSE)).
-% Higher PSNR: reconstructed pixel value more consistent to original image
-psnr_zero = get_psnr(x,x_hat_zero,255);
-psnr_espirit = get_psnr(x,x_hat_espirit,255);
-psnr_sense = get_psnr(x,x_hat_sense,255);
 
 % % Modified RLNE/PSNR metrics
 %
@@ -558,23 +947,12 @@ psnr_sense = get_psnr(x,x_hat_sense,255);
 % % psnr_espirit_zmuv = get_psnr(x_zmuv,x_hat_espirit_zmuv,1);
 % % psnr_sense_zmuv = get_psnr(x_zmuv,x_hat_sense_zmuv,1);
 
-% fprintf(sprintf('\nMean intensity diff:\n\tZero-filled recon: %.4f\n\tESPIRiT recon: %.4f\n\tSENSE recon: %.4f\n',...
-%     zero_diff,espirit_diff,sense_diff));
-%
-fprintf(sprintf('\nRLNE:\n\tZero-filled recon: %.4f\n\tESPIRiT recon: %.4f\n\tSENSE recon: %.4f\n',...
-    rlne_zero,rlne_espirit,rlne_sense));
-% % fprintf(sprintf('Normalized RLNE:\n\tZero-filled recon: %.4f\n\tESPIRiT recon: %.4f\n\tSENSE recon: %.4f\n',...
-% %     norm_rlne_zero,norm_rlne_espirit,norm_rlne_sense));
-% % fprintf(sprintf('RLNE with ZMUV data:\n\tZero-filled recon: %.4f\n\tESPIRiT recon: %.4f\n\tSENSE recon: %.4f\n',...
-% %     rlne_zero_zmuv,rlne_espirit_zmuv,rlne_sense_zmuv));
-%
+% fprintf(sprintf('\nRLNE:\n\tZero-filled recon: %.4f\n\tESPIRiT recon: %.4f\n\tSENSE recon: %.4f\n',...
+%     rlne_zero,rlne_espirit,rlne_sense));
+% fprintf(sprintf('\nSSIM:\n\tZero-filled recon: %.4f\n\tESPIRiT recon: %.4f\n\tSENSE recon: %.4f\n',...
+%     ssim_zero,ssim_espirit,ssim_sense));
 % fprintf(sprintf('\nPSNR:\n\tZero-filled recon: %.4f\n\tESPIRiT recon: %.4f\n\tSENSE recon: %.4f\n',...
 %     psnr_zero,psnr_espirit,psnr_sense));
-% % fprintf(sprintf('Normalized PSNR:\n\tZero-filled recon: %.4f\n\tESPIRiT recon: %.4f\n\tSENSE recon: %.4f\n',...
-% %     norm_psnr_zero,norm_psnr_espirit,norm_psnr_sense));
-% % fprintf(sprintf('PSNR with ZMUV data:\n\tZero-filled recon: %.4f\n\tESPIRiT recon: %.4f\n\tSENSE recon: %.4f\n',...
-% %     psnr_zero_zmuv,psnr_espirit_zmuv,psnr_sense_zmuv));
-
 
 % Structural similarity (SSIM): equation 33 in
 % https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4917755/
