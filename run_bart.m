@@ -43,9 +43,16 @@ recon_along_x = true; %!! 14 February 2020--our protocols will recon along x ins
 % in the data directory. If you're loading it in (and bruker_img.MAT should
 % be in the addecode main directory), you don't need this folder
 %workpath = [data_dir '/B04027.work'];
-workpath = [data_dir '/127']; % [data_dir '/115'];
-% Re-center k-space. Set to false for B04027, which is already centered
-do_fft_shift = true; %!!
+data_strs = {'/B04027.work','/127','/115'};
+data_ind = 2;
+data_str = data_strs{data_ind};
+workpath = [data_dir data_str];
+%! Re-center k-space. Set to false for B04027, which is already centered
+if strcmp(data_str,'/B04027.work')
+    do_fft_shift = false; % This FFT shift re-centers k-space
+else
+    do_fft_shift = true;
+end
 y_shift = 10;
 
 addpath(bartmatlabpath)
@@ -122,8 +129,7 @@ else
         ksp_data=get_RussRecon_img('bruker','center','save');
         % kspace may be centered in along some axes but not others.
         
-        if do_fft_shift
-            % Comment out if using B04027.work
+        if do_fft_shift % Don't recenter if using B04027.work
             % Recenter RARE k-space in z-direction
             ksp_data=fftshift(ksp_data, 3);
             % MANUALLY recenter in y-direction
@@ -173,7 +179,7 @@ if recon_along_x
     slices_to_generate = 1:ksp_dims(1); % 57 %* Reconstruct images for these slices
     xlbl = 'X-axis slice';
 else
-    slices_to_generate = 57;%1:ksp_dims(3);
+    slices_to_generate = 1:ksp_dims(3);
     xlbl = 'Z-axis slice';
 end
 % !!! Slices 68-72 have issues
@@ -186,10 +192,10 @@ slices_to_compare = slices_to_generate;
 %% Undersampling/recon settings
 
 % Undersampling parameters
-acceleration = 1; %* Undersample by a factor of <acceleration>. NOTE: this
+accel = 1; %* Undersample by a factor of <acceleration>. NOTE: this
 % is often not the 'true' acceleration for some reason, so look at
 % 'actual_accel' too (calculated directly from generated sampling pattern)
-cal_reg = 50; % Size of calibration region. 60
+cal_reg = 50; % Size of calibration region. 50 for 127, 40 for B04027. Previously 60
 
 % Reconstruction parameters
 reg_stepsize = 1e-2; %* Size of regularization parameter. 0.01
@@ -197,35 +203,57 @@ reg_method = 'l1'; %* Regularization method ('l1' or 'l2'). l1
 % caldir.c, ecalib.c
 recon_cal_size = cal_reg; %* Upper limit of calibration region size
 espirit_kernel_size = 5; %* Kernel size
-espirit_num_maps = 4; %* Number of sensitivity maps to calculate.
+if strcmp(data_str,'/B04027.work')
+    espirit_num_maps = 2; %* Number of sensitivity maps to calculate.
+else
+    espirit_num_maps = 4;
+end
 % ^ Cannot be more than the number of coils used to acquire the image
 gen_sense_recon = true; % Generate SENSE reconstruction (as well as ESPIRiT)?
 
 %% Grid search
 % Choose variable to iterate over
-iter_vars = {'acceleration','cal_reg','reg_stepsize',...
+iter_vars = {'accel','cal_reg','reg_stepsize',...
     'espirit_kernel_size','espirit_num_maps'};
 % Set iteration type from options in cell above
 iter_type = 1; % Set to 0 to not iterate
 
-iter_var_titles = {'Acceleration','Calibration Region Size','Step-size',...
+% !!! Note: 'accel' is the input to the function generating the
+% sampling pattern. For BART, the 'true' acceleration will depend on the
+% size of the calibration region ('cal_reg') and the value of 'accel'
+% e.g. for image 127, when cal_reg = 50 and acceleration = 1, the 'true'
+% acceleration is 4.09
+iter_var_titles = {'accel','Calibration Region Size','Step-size',...
     'Kernel Size','Number of maps'};
-if iter_type == 0
-    iter_values = NaN;
-else
-    iter_values = 1:4; %acceleration
-    %iter_values = 1:4; % maps
-    %iter_values = 2:9; % k size
-    %iter_values = 30:10:80; % cal reg
-    %iter_values = [2.5e-3,5e-3,7.5e-3,1e-2,2.5e-2,5e-2]; %stepsize (slicing in x)
-    %iter_values = [1e-4,1e-3,5e-3,1e-2,5e-2,1e-1]; %stepsize (slicing in z)
+switch iter_type
+    case 0
+        iter_values = NaN;
+    case 1
+        iter_values = 1:5; %acceleration
+    case 2
+        iter_values = 30:10:70; % cal reg
+    case 3
+        % % fewer stepsizes for L2 regularization
+        %iter_values = [1e-1,5e-1];
+        %iter_values = [5e-3,1e-2,5e-2];
+        % % higher stepsizes
+        %iter_values = [2.5e-2,5e-2,7.5e-2,1e-1]; %stepsize (slicing in x) -
+        % % lower stepsizes
+        %iter_values = [5e-3,7.5e-3,1e-2,2.5e-2,5e-2]; %stepsize (slicing in x)
+        %iter_values = [1e-4,1e-3,5e-3,1e-2,5e-2,1e-1]; %stepsize (slicing in z)
+    case 4
+        iter_values = 2:7; % k size
+    case 5
+        % Max # maps is # coils (2 for image B04027, 4 for images 127, 115)
+        iter_values = 1:espirit_num_maps; % maps.
+    
 end
 
 % If acceleration or calibration region is being changed, the sampling
 % pattern changes and therefore zero-filled reconstruction will also be
 % affected (meaning more than one zero-filled plot is needed per quality
 % metric for visualization purposes)
-if strcmp(iter_vars{iter_type},'acceleration') || ...
+if strcmp(iter_vars{iter_type},'accel') || ...
         strcmp(iter_vars{iter_type},'cal_reg')
     regenerate_mask = true;
 else
@@ -263,7 +291,7 @@ if ~use_espirit_data
 end
 
 %% Iterate through desired recon settings
-
+tic
 for iter = 1:length(iter_values)
     if iter_type > 0
         % Step through values for iterating variable
@@ -281,7 +309,7 @@ for iter = 1:length(iter_values)
             % ~25% of elements in und2x2 in espirit.m were nonzero
             % !!! Although this should reflect 9216 points, only 8005 points are
             % generated
-            num_points = sz_x*sz_y/acceleration;
+            num_points = sz_x*sz_y/accel;
             
             % Sampling pattern. Binary mask (ones and zeros), where ones are the
             % only points that we sample
@@ -289,7 +317,7 @@ for iter = 1:length(iter_values)
             % dimension of length 1, so squeeze to remove this dimension
             % C manually tuned to 60 for best reconstruction results
             % Method 1: acceleration set by y, z
-            sampling_pattern = squeeze(bart(sprintf('poisson -Y %d -Z %d -y %d -z %d -C %d -v -e',sz_x,sz_y,acceleration,acceleration,cal_reg)));
+            sampling_pattern = squeeze(bart(sprintf('poisson -Y %d -Z %d -y %d -z %d -C %d -v -e',sz_x,sz_y,accel,accel,cal_reg)));
             % Method 2: acceleration set by R
 %             sampling_pattern = squeeze(bart(sprintf('poisson -Y %d -Z %d -y 1 -z 1 -C %d -R %d -v -e',sz_x,sz_y,cal_reg,num_points)));
         else
@@ -303,7 +331,7 @@ for iter = 1:length(iter_values)
                 
                 % Sampling pattern. Logical binary mask (ones and zeros), where ones
                 % indicate the only points that we sample
-                sampling_pattern = sampling_mask(acceleration,sz_x,sz_y,pa,pb);
+                sampling_pattern = sampling_mask(accel,sz_x,sz_y,pa,pb);
             end
         end
         
@@ -745,14 +773,15 @@ for iter = 1:length(iter_values)
         end
     end
 end
+toc
 
 % Plot reconstruction quality performance
 if gen_quality_metrics
     qm_fig = figure;
     
     % Save true acceleration rate to filename if not shown on plot
-    if ~strcmp(iter_vars{iter_type},'acceleration')
-        acceleration = actual_accel;
+    if ~strcmp(iter_vars{iter_type},'accel')
+        accel = actual_accel;
     else
         % Replace 'nominal' acceleration with 'true' acceleration for x
         % axis labels
@@ -777,13 +806,8 @@ if gen_quality_metrics
         num_rows = ceil(num_plots/3);
         zf_cols = repmat('k',1,size(rlne_zero,2));
         cols = repmat('b',1,size(rlne_espirit,2));
-        if gen_sense_recon
-            legend_str2 = {'Zero-filled','ESPIRiT','SENSE'};
-        else
-            legend_str2 = {'Zero-filled','ESPIRiT'};
-        end
         set(qm_fig,'Position',[50 300 950 min([280*num_rows,700])])
-        if strcmp(iter_vars{iter_type},'acceleration')
+        if strcmp(iter_vars{iter_type},'accel')
             % True acceleration values are generally not integers, so
             % control output format
             legend_str = arrayfun(@(x) ...
@@ -797,6 +821,13 @@ if gen_quality_metrics
                 sprintf('ESPIRiT, %d',x),iter_values,'UniformOutput',false);
         end
     end
+    
+    if gen_sense_recon
+        legend_str2 = {'Zero-filled','ESPIRiT','SENSE'};
+    else
+        legend_str2 = {'Zero-filled','ESPIRiT'};
+    end
+    
     for ii = 1:num_plots
         s(ii) = subplot(num_rows,3,ii);hold(s(ii),'on')
     end
@@ -822,8 +853,11 @@ if gen_quality_metrics
         plot(s(plot_ind),rlne_espirit(:,ii),[line_style,col],'LineWidth',1.5)
         plot(s(plot_ind+1),psnr_espirit(:,ii),[line_style,col],'LineWidth',1.5)
         plot(s(plot_ind+2),ssim_espirit(:,ii),[line_style,col],'LineWidth',1.5)
-        if regenerate_mask
-            ylabel(s(plot_ind),{sprintf('%s %d',iter_var_str,iter_values(ii)),...
+        if strcmp(iter_vars{iter_type},'accel')
+            ylabel(s(plot_ind),{sprintf('%s: %.2f',iter_var_str,iter_values(ii)),...
+                '\leftarrow RLNE'})
+        elseif strcmp(iter_vars{iter_type},'cal_reg')
+            ylabel(s(plot_ind),{sprintf('%s: %d',iter_var_str,iter_values(ii)),...
                 '\leftarrow RLNE'})
         else
             ylabel(s(plot_ind),'\leftarrow RLNE')
@@ -843,6 +877,7 @@ if gen_quality_metrics
         end
     end
     
+    % Add values of all other variables to the filename (for notekeeping)
     non_iter = setdiff(1:length(iter_vars),iter_type);
     recon_str = '';
     
@@ -851,25 +886,37 @@ if gen_quality_metrics
         recon_ind = [1,(regexp(iter_vars{ii},'_')+1)];
         if strcmp(iter_vars{ii},'reg_stepsize')
             recon_str = [recon_str,'_',iter_vars{ii}(recon_ind),sprintf('%1.0g',curr_var)];
+        elseif strcmp(iter_vars{ii},'accel')
+            % If calibration region is changed, don't add acceleration to
+            % filename (because that will also change)
+            if ~strcmp(iter_vars{iter_type},'cal_reg')
+                recon_str = [recon_str,'_',iter_vars{ii}(recon_ind),sprintf('%.2f',curr_var)];
+            end
         else
             recon_str = [recon_str,'_',iter_vars{ii}(recon_ind),sprintf('%d',curr_var)];
         end
     end
     
     if gen_sense_recon
-        sense_cols = repmat('r',1,size(rlne_espirit,2));
+        if regenerate_mask % Line style for plot
+            sense_ls = '--';
+            sense_cols = repmat('r',1,size(rlne_espirit,2));
+        else
+            sense_ls = ':';
+            sense_cols = cols;
+        end
         for ii = 1:size(rlne_sense,2)
             % Plot in a new row if zero-filled data is plotted across
             % multiple rows
             plot_ind = 1+3*regenerate_mask*(ii-1);
-            plot(s(plot_ind),rlne_sense(:,ii),['--',sense_cols(ii)],'LineWidth',1.5)
-            plot(s(plot_ind+1),psnr_sense(:,ii),['--',sense_cols(ii)],'LineWidth',1.5)
-            plot(s(plot_ind+2),ssim_sense(:,ii),['--',sense_cols(ii)],'LineWidth',1.5)
+            plot(s(plot_ind),rlne_sense(:,ii),[sense_ls,sense_cols(ii)],'LineWidth',1.5)
+            plot(s(plot_ind+1),psnr_sense(:,ii),[sense_ls,sense_cols(ii)],'LineWidth',1.5)
+            plot(s(plot_ind+2),ssim_sense(:,ii),[sense_ls,sense_cols(ii)],'LineWidth',1.5)
         end
         if strcmp(iter_vars{iter_type},'reg_stepsize')
             legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
                 sprintf('SENSE, %1.0e',x),iter_values,'UniformOutput',false);
-        elseif strcmp(iter_vars{iter_type},'acceleration')
+        elseif strcmp(iter_vars{iter_type},'accel')
             legend_str(end+1:end+length(iter_values)) = arrayfun(@(x) ...
                 sprintf('SENSE, %.2f',x),iter_values,'UniformOutput',false);
         else
@@ -903,7 +950,7 @@ if gen_quality_metrics
             l.Position([1,2]) = [0.885,0.44];
         end
         for ii = 1:length(s)
-            set(s(ii),'Position',[0.05+(ii-1)*0.295,0.13,0.24,0.7])
+            set(s(ii),'Position',[0.045+(ii-1)*0.295,0.13,0.24,0.7])
         end
         title(l,iter_var_str)
     end
@@ -911,17 +958,17 @@ if gen_quality_metrics
     s_ttl = suptitle(['Reconstruction performance over ',lower(iter_var_titles{iter_type})]);
     set(s_ttl,'FontSize',19,'FontWeight','bold')%,'Position',[mean(s2_axl(1:2)),1.13*s2_axl(4)-0.13*s2_axl(3)])
     
+    % Show effective acceleration when calibration region is changed in the
+    % form of a caption in the first plot of each row
     % Set caption after suptitle; otherwise, they go off the edge of the
     % plot
-    if regenerate_mask
+    if strcmp(iter_vars{iter_type},'cal_reg')
         plot_ind = 1;
         for ii = 1:length(iter_values)
-            % Show effective acceleration when calibration region or
-            % nominal acceleartion is changed
             % Add caption to each row
             axl = axis(s(plot_ind));
             text(s(plot_ind),0.05*axl(2),0.05*axl(3)+0.95*axl(4),...
-                sprintf('actual accel: %.2f',actual_accel(ii)),'FontSize',12)
+                sprintf('accel: %.2f',actual_accel(ii)),'FontSize',12)
             plot_ind = plot_ind + 3;
         end
     end
@@ -929,6 +976,7 @@ if gen_quality_metrics
     saveas(qm_fig,sprintf('%s/recon_qm_%s%s%s%s.fig',fig_dirpath,mask,sense_flag,xlbl(1),recon_str))
     saveas(qm_fig,sprintf('%s/recon_qm_%s%s%s%s.png',fig_dirpath,mask,sense_flag,xlbl(1),recon_str))
     
+    % Generate plot of MEAN QM for each value over which you iterate
     if regenerate_mask
         num_repeats = 1;
     else
