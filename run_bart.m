@@ -44,7 +44,7 @@ recon_along_x = true; %!! 14 February 2020--our protocols will recon along x ins
 % be in the addecode main directory), you don't need this folder
 %workpath = [data_dir '/B04027.work'];
 data_strs = {'/B04027.work','/127','/115'};
-data_ind = 2;
+data_ind = 1;
 data_str = data_strs{data_ind};
 workpath = [data_dir data_str];
 %! Re-center k-space. Set to false for B04027, which is already centered
@@ -192,60 +192,80 @@ slices_to_compare = slices_to_generate;
 %% Undersampling/recon settings
 
 % Undersampling parameters
-accel = 1; %* Undersample by a factor of <acceleration>. NOTE: this
+accel = 4; %* Undersample by a factor of <acceleration>. NOTE: this
 % is often not the 'true' acceleration for some reason, so look at
 % 'actual_accel' too (calculated directly from generated sampling pattern)
-cal_reg = 50; % Size of calibration region. 50 for 127, 40 for B04027. Previously 60
+% For images 127 and B04027, setting accel to 4 with a calibration region
+% size (cal_reg) of 40 results in a true acceleration close to 8 (~7.94 and
+% 7.81, respectively)
+cal_reg = 40; % Size of calibration region. 40. Previously 60
 
 % Reconstruction parameters
 reg_stepsize = 1e-2; %* Size of regularization parameter. 0.01
 reg_method = 'l1'; %* Regularization method ('l1' or 'l2'). l1
 % caldir.c, ecalib.c
 recon_cal_size = cal_reg; %* Upper limit of calibration region size
-espirit_kernel_size = 5; %* Kernel size
 if strcmp(data_str,'/B04027.work')
     espirit_num_maps = 2; %* Number of sensitivity maps to calculate.
+    espirit_kernel_size = 4; %* Kernel size
 else
     espirit_num_maps = 4;
+    espirit_kernel_size = 5; %* Kernel size
 end
 % ^ Cannot be more than the number of coils used to acquire the image
-gen_sense_recon = true; % Generate SENSE reconstruction (as well as ESPIRiT)?
+gen_sense_recon = false; % Generate SENSE reconstruction (as well as ESPIRiT)?
 
 %% Grid search
 % Choose variable to iterate over
-iter_vars = {'accel','cal_reg','reg_stepsize',...
+iter_vars = {'cal_reg','accel','reg_stepsize',...
     'espirit_kernel_size','espirit_num_maps'};
 % Set iteration type from options in cell above
-iter_type = 1; % Set to 0 to not iterate
+iter_type = 3; % Set to 0 to not iterate
 
 % !!! Note: 'accel' is the input to the function generating the
 % sampling pattern. For BART, the 'true' acceleration will depend on the
 % size of the calibration region ('cal_reg') and the value of 'accel'
 % e.g. for image 127, when cal_reg = 50 and acceleration = 1, the 'true'
 % acceleration is 4.09
-iter_var_titles = {'accel','Calibration Region Size','Step-size',...
+iter_var_titles = {'Calibration Region Size','Acceleration','Step-size',...
     'Kernel Size','Number of maps'};
 switch iter_type
-    case 0
+    case 0 % Don't iterate through anything
         iter_values = NaN;
-    case 1
-        iter_values = 1:5; %acceleration
-    case 2
-        iter_values = 30:10:70; % cal reg
-    case 3
+    case 1 % Calibration region size
+        iter_values = 20:10:50;
+        if strcmp(data_str,'/127')
+            % Image 1 (127):
+            % For true acceleration of ~5.1:
+            iter_values2 = [1,1.2,1.66,2.8];
+            % For true acceleration of ~6.48:
+            % iter_values2 = [1.58,1.9,2.67,7];
+            % For true acceleration of ~7.95 (only for cal reg 20-40)
+            %iter_values2 = [2.03,2.51,4];
+            % Image 2 (B04027)
+        else
+            iter_values2 = ones(1,length(iter_values));
+        end
+    case 2 % Acceleration
+        % These are nominal acceleration values
+        if strcmp(data_str,'/127')
+            iter_values = [1,1.8,2.4,3,3.8,4.4]; % for CRS 40
+        else % Naive acceleration values
+            iter_values = 1:5;
+        end
+    case 3 % Regularization step-size
         % % fewer stepsizes for L2 regularization
-        %iter_values = [1e-1,5e-1];
-        %iter_values = [5e-3,1e-2,5e-2];
+        % iter_values = [5e-3,1e-2,5e-2,1e-1];
         % % higher stepsizes
         %iter_values = [2.5e-2,5e-2,7.5e-2,1e-1]; %stepsize (slicing in x) -
         % % lower stepsizes
-        %iter_values = [5e-3,7.5e-3,1e-2,2.5e-2,5e-2]; %stepsize (slicing in x)
-        %iter_values = [1e-4,1e-3,5e-3,1e-2,5e-2,1e-1]; %stepsize (slicing in z)
-    case 4
-        iter_values = 2:7; % k size
-    case 5
+        iter_values = [5e-3,7.5e-3,1e-2,2.5e-2,5e-2]; %stepsize (slicing in x)
+        % iter_values = [1e-4,1e-3,5e-3,1e-2,5e-2,1e-1]; %stepsize (slicing in z)
+    case 4 % Kernel size
+        iter_values = 2:5; % k size
+    case 5 % Number of ESPiRIT maps to calculate
         % Max # maps is # coils (2 for image B04027, 4 for images 127, 115)
-        iter_values = 1:espirit_num_maps; % maps.
+        iter_values = 1:espirit_num_maps;
     
 end
 
@@ -277,25 +297,25 @@ if ~use_espirit_data
     % length 1)
     
     ksp_echo_n_data=squeeze(ksp_data(:,:,:,echo_num,:));
-    
     % Only going to transform readout direction
     if recon_along_x
         readout_dim=1;
     else
         readout_dim=3;
     end
-    
     %ksp_echo_n_ifft = bart('fft -i 7',squeeze(ksp_data(:,:,:,1,:)));
-    
     ksp_echo_n_ifft = fftshift(ifft(fftshift(ksp_echo_n_data,readout_dim),[],readout_dim),readout_dim);
 end
 
-%% Iterate through desired recon settings
-tic
+%% Iterate through desired recon settings (only allows you to search
+% one parameter at a time
 for iter = 1:length(iter_values)
     if iter_type > 0
         % Step through values for iterating variable
         eval(sprintf('%s = %d;',iter_vars{iter_type},iter_values(iter)))
+        if strcmp(iter_vars{iter_type},'cal_reg')
+            accel = iter_values2(iter);
+        end
     end
     %% Generate sampling pattern and undersample K-space
     if iter == 1 || regenerate_mask % Re-generate if acceleration or calibration region is changed
@@ -356,6 +376,7 @@ for iter = 1:length(iter_values)
         sense_3d_img = zeros(ksp_dims(1:3));
     end
     
+    time_start(iter) = tic;
     %% Reconstruct every slice
     for slice = slices_to_generate
         if use_espirit_data
@@ -700,6 +721,7 @@ for iter = 1:length(iter_values)
         end
         fprintf(sprintf('Reconstructed slice %d\n',slice))
     end
+    time_stop(iter) = toc(time_start(iter));
     
     if save_nifti
         fs_nii = make_nii(fs_3d_img,[],ksp_dims(1:3),64);
@@ -889,9 +911,7 @@ if gen_quality_metrics
         elseif strcmp(iter_vars{ii},'accel')
             % If calibration region is changed, don't add acceleration to
             % filename (because that will also change)
-            if ~strcmp(iter_vars{iter_type},'cal_reg')
-                recon_str = [recon_str,'_',iter_vars{ii}(recon_ind),sprintf('%.2f',curr_var)];
-            end
+            recon_str = [recon_str,'_',iter_vars{ii}(recon_ind),sprintf('%.2f',mean(curr_var))];
         else
             recon_str = [recon_str,'_',iter_vars{ii}(recon_ind),sprintf('%d',curr_var)];
         end
