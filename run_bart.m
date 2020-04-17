@@ -1,5 +1,6 @@
 close all;clear;clc;
-clearvars -except 
+% Xinlin Chen
+% version dated 2020/04/17
 
 % If you don't want to run RussRecon (and install all the folders), set
 % load_data to false, download 'bruker_data.mat' and comment out all
@@ -43,8 +44,8 @@ recon_along_x = true; %!! 14 February 2020--our protocols will recon along x ins
 % in the data directory. If you're loading it in (and bruker_img.MAT should
 % be in the addecode main directory), you don't need this folder
 %workpath = [data_dir '/B04027.work'];
-data_strs = {'/B04027.work','/127','/115'};
-data_ind = 1;
+data_strs = {'/B04027.work','/127','/115'}; %! Ensure you have correct image paths
+data_ind = 1; % Pick the image
 data_str = data_strs{data_ind};
 workpath = [data_dir data_str];
 %! Re-center k-space. Set to false for B04027, which is already centered
@@ -82,8 +83,11 @@ load_mask = false; %* load sampling mask in? Currently, only BJ mask is saved
 num_iter = 1; % Number of sampling patterns/reconstructions to generate
 % (to get mean RLNE, PSNR values)
 
-gen_quality_metrics = true; % Whether to generate quality metrics (QM)
-% (RLNE/PSNR/SSIM) for each slice
+% Whether to generate quality metrics (QM: RLNE/PSNR/SSIM) for each slice
+gen_quality_metrics = true;
+
+% Whether to plot QM (gen_quality_metrics should be set to true if this is)
+plot_quality_metrics = false;
 % When saving QM figure generated with BJ's sampling pattern, note this in
 % the filename
 if ~bart_mask && gen_quality_metrics
@@ -100,11 +104,11 @@ recon_wh = [0.325,0.35];
 poster_wh = [0.9,0.32]; %0.28];
 cols = 'brgmc';
 show_recon_steps = false; %* Show sampling pattern, calibration maps, etc.?
-gen_recon_plots = false; %* Generate plot comparing reconstruction quality?
+plot_recon_figs = false; %* Generate plot comparing reconstruction quality?
 %* Save plot comparing reconstruction quality? Only saves plots if they were actually generated.
 save_recon_plots = false;
-gen_poster_plots = false; % Generate plots for Neuro poster session?
-gen_diff_maps = false; %* Generate difference maps
+plot_poster_figs = false; % Generate plots for Neuro poster session?
+plot_diff_maps = false; %* Generate difference maps
 
 % Directory in which to save image slices
 recon_img_dirpath = '/Users/janetchen/Documents/Bass Connections/Reconstructed images'; %!
@@ -220,7 +224,7 @@ gen_sense_recon = false; % Generate SENSE reconstruction (as well as ESPIRiT)?
 iter_vars = {'cal_reg','accel','reg_stepsize',...
     'espirit_kernel_size','espirit_num_maps'};
 % Set iteration type from options in cell above
-iter_type = 3; % Set to 0 to not iterate
+iter_type = 0; % Set to 0 to not iterate
 
 % !!! Note: 'accel' is the input to the function generating the
 % sampling pattern. For BART, the 'true' acceleration will depend on the
@@ -273,8 +277,8 @@ end
 % pattern changes and therefore zero-filled reconstruction will also be
 % affected (meaning more than one zero-filled plot is needed per quality
 % metric for visualization purposes)
-if strcmp(iter_vars{iter_type},'accel') || ...
-        strcmp(iter_vars{iter_type},'cal_reg')
+if iter_type > 0 && (strcmp(iter_vars{iter_type},'accel') || ...
+        strcmp(iter_vars{iter_type},'cal_reg'))
     regenerate_mask = true;
 else
     % If something like regularization step-size is being changed,
@@ -427,7 +431,7 @@ for iter = 1:length(iter_values)
             us_ksp_data_echo_n_slice = permute(us_ksp_echo_n_z1,[1,2,4,3]);
         end
         
-        if gen_sense_recon || gen_recon_plots
+        if gen_sense_recon || plot_recon_figs
             % SENSE reconstruction (direct calibration from k-space center)
             % Maps generated using autocalibration
             % !!!Increasing caldir size seems to improve recon? Attempted up to 60
@@ -461,8 +465,9 @@ for iter = 1:length(iter_values)
             reg_stepsize), us_ksp_data_echo_n_slice, espirit_maps));
         espirit_finalimg = bart('rss 4', espirit_coilimg); % 16 if 'squeeze' not used above
         
-        if recon_along_x && gen_recon_plots
+        if recon_along_x && plot_recon_figs
             espirit_map1_finalimg = abs(espirit_coilimg(:,:,1));
+            % Transpose for images
             fs_finalimg = fs_finalimg';
             zf_finalimg = zf_finalimg';
             espirit_map1_finalimg = espirit_map1_finalimg';
@@ -525,7 +530,7 @@ for iter = 1:length(iter_values)
                 set(ax,'Position',[0.05 0.04 0.9 0.88])
             end
             
-            if gen_recon_plots
+            if plot_recon_figs
                 posn = zeros(4,4);
                 % Comparisons of different reconstruction methods
                 % Plot images from last iteration
@@ -556,12 +561,15 @@ for iter = 1:length(iter_values)
                 title(ax(3),'(d) ESPIRiT recon (all maps)','FontSize',16)
                 posn(3,:) = get(ax(3),'Position');
                 
-                subplot(2,3,6)
-                ax(4) = gca;
-                imshow(abs(sense_finalimg),[])
-                title(ax(4),'(e) SENSE recon','FontSize',16)
-                set(fig4,'Position',[400 100 1000 625])
-                posn(4,:) = get(ax(4),'Position');
+                if gen_sense_recon
+                    
+                    subplot(2,3,6)
+                    ax(4) = gca;
+                    imshow(abs(sense_finalimg),[])
+                    title(ax(4),'(e) SENSE recon','FontSize',16)
+                    set(fig4,'Position',[400 100 1000 625])
+                    posn(4,:) = get(ax(4),'Position');
+                end
                 
                 % Reposition image axes
                 % Shift to same column position
@@ -571,7 +579,7 @@ for iter = 1:length(iter_values)
                 posn(:,[3,4]) = repmat(recon_wh,4,1);
                 fs_posn = get(fs_ax,'Position'); fs_posn=[0 0.31 recon_wh];
                 set(fs_ax,'Position',fs_posn)
-                for ii = 1:size(posn,1)
+                for ii = 1:length(ax)
                     set(ax(ii),'Position',posn(ii,:))
                 end
                 
@@ -581,22 +589,27 @@ for iter = 1:length(iter_values)
                 end
             end
             
-            if gen_poster_plots
+            if plot_poster_figs
                 posn = zeros(3,4);
                 % Comparisons of different reconstruction methods
+                % Top: image from fully sampled k space
+                % Middle: image from undersampled k space, zero-filled
+                % reconstruction
+                % Bottom: image from undersampled k space, ESPIRiT
+                % reconstruction
                 % Plot images from last iteration
                 % Zero-filled reconstruction
                 poster_fig = figure;
                 subplot(3,1,1)
                 ax = gca;
-                imshow(fs_finalimg,[]);colormap('gray')
+                imshow(fs_finalimg',[]);colormap('gray')
                 %             ylabel('(a) Original image','FontSize',22,'FontWeight',...
                 %                 'bold','Position',[-5 96 0])
                 posn(1,:) = get(ax(1),'Position');
                 
                 subplot(3,1,2)
                 ax(2) = gca;
-                imshow(zf_finalimg,[])
+                imshow(zf_finalimg',[])
                 %             ylabel({'(b) Zero-filled','reconstruction'},'FontSize',...
                 %                 22,'FontWeight','bold','Position',[-5 96 0])
                 posn(2,:) = get(ax(2),'Position');
@@ -605,7 +618,7 @@ for iter = 1:length(iter_values)
                 % sampled k space
                 subplot(3,1,3)
                 ax(3) = gca;
-                imshow(espirit_finalimg,[]);
+                imshow(espirit_finalimg',[]);
                 %             ylabel('(c) CS reconstruction','FontSize',22,...
                 %                 'FontWeight','bold','Position',[-5 96 0])
                 posn(3,:) = get(ax(3),'Position');
@@ -628,6 +641,14 @@ for iter = 1:length(iter_values)
         end
         
         if recon_along_x
+            if plot_recon_figs % Transpose back
+                espirit_map1_finalimg = abs(espirit_coilimg(:,:,1));
+                fs_finalimg = fs_finalimg';
+                zf_finalimg = zf_finalimg';
+                espirit_map1_finalimg = espirit_map1_finalimg';
+                espirit_finalimg = espirit_finalimg';
+                sense_finalimg = sense_finalimg';
+            end
             % Add current x-axis slice to 3D arrays
             fs_3d_img(slice,:,:) = fs_finalimg;
             zf_3d_img(slice,:,:) = zf_finalimg;
@@ -645,9 +666,8 @@ for iter = 1:length(iter_values)
             end
         end
         
-        %close all;%close(fig4)
         
-        if gen_diff_maps && ismember(slice,slices_to_compare)
+        if plot_diff_maps && ismember(slice,slices_to_compare)
             
             fs_rss = permute(fs_finalimg,[3 1 2]); % Add singleton dimension to match other images
             
@@ -655,29 +675,41 @@ for iter = 1:length(iter_values)
             x = abs(squeeze(gs_normalize(fs_rss,255)));
             % Zero-filled reconstruction
             x_hat_zero = abs(gs_normalize(zf_finalimg,255));
-            % ESPIRiT reconstruction (2 combined maps)
+            % ESPIRiT reconstruction (all combined maps)
             x_hat_espirit = abs(gs_normalize(espirit_finalimg,255));
-            % SENSE reconstruction
-            x_hat_sense = abs(gs_normalize(sense_finalimg,255));
-            % Also assess using difference maps (?)
-            fig5 = figure;ax = gca;imshow([abs(x-x_hat_zero)',...
+            if gen_sense_recon
+                % SENSE reconstruction
+                x_hat_sense = abs(gs_normalize(sense_finalimg,255));
+                all_images = [abs(x-x_hat_zero)',...
                 abs(x-x_hat_espirit)',...
-                abs(x-x_hat_sense)'],[]);
+                abs(x-x_hat_sense)'];
+                title_str = sprintf('(a) Zero-filled recon\t\t\t\t\t(b) ESPIRiT recon (%d maps)\t\t\t\t\t\t(c) SENSE recon',...
+                    espirit_num_maps);
+            else
+                all_images = [abs(x-x_hat_zero)',...
+                abs(x-x_hat_espirit)'];
+                title_str = sprintf('(a) Zero-filled recon\t\t\t\t\t(b) ESPIRiT recon (%d maps)',...
+                    espirit_num_maps);
+            end
+            % Also assess using difference maps
+            fig5 = figure;ax = gca;imshow(all_images,[]);
             % For imshow, have to manually change current axes, otherwise the titles
             % plot on the prev axes, and suptitle doesn't accept axes as an input
             axes(ax);ax.FontSize = 13;
-            title(sprintf('(a) Zero-filled recon\t\t\t\t\t(b) ESPIRiT recon (2 maps)\t\t\t\t\t\t(c) SENSE recon'));
+            title(title_str);
             t = suptitle('Difference maps');set(t,'FontSize',16,'FontWeight','bold')
             set(ax,'Position',[0.01 0.1 0.98 0.6])
             set(fig5,'Position',[150 400 500 150])
             
-            if gen_poster_plots
+            if plot_poster_figs
                 clear posn ax
-                % Comparisons of different reconstruction methods
+                % 2-panel plot:
+                % Top: image from undersampled, zero-filled reconstruction
+                % Bottom: image from undersampled ESPIRiT reconstruction
                 % Plot images from last iteration
                 % Zero-filled reconstruction
                 poster_fig2 = figure;
-                subplot(3,1,1)
+                subplot(2,1,1)
                 ax = gca;
                 if recon_along_x
                     imshow(abs(x-x_hat_zero)',[]);
@@ -689,7 +721,7 @@ for iter = 1:length(iter_values)
                 %                 'FontWeight','bold','Position',[-5 96 0])
                 posn(1,:) = get(ax(1),'Position');
                 
-                subplot(3,1,2)
+                subplot(2,1,2)
                 ax(2) = gca;
                 if recon_along_x
                     imshow(abs(x-x_hat_espirit)',[])
@@ -795,10 +827,9 @@ for iter = 1:length(iter_values)
         end
     end
 end
-toc
 
 % Plot reconstruction quality performance
-if gen_quality_metrics
+if plot_quality_metrics
     qm_fig = figure;
     
     % Save true acceleration rate to filename if not shown on plot
